@@ -1,5 +1,6 @@
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, ZonedError};
@@ -130,6 +131,7 @@ fn blk_zone_to_zone(bz: &BlkZone, has_capacity: bool) -> Zone {
 pub(crate) struct PlatformDevice {
     file: File,
     path: PathBuf,
+    writable: bool,
 }
 
 impl PlatformDevice {
@@ -150,7 +152,60 @@ impl PlatformDevice {
         Ok(Self {
             file,
             path: path.to_path_buf(),
+            writable: false,
         })
+    }
+
+    pub(crate) fn open_writable(path: &Path) -> Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ZonedError::DeviceNotFound {
+                        path: path.to_path_buf(),
+                    }
+                } else {
+                    ZonedError::Io {
+                        path: path.to_path_buf(),
+                        source: e,
+                    }
+                }
+            })?;
+
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+            writable: true,
+        })
+    }
+
+    pub(crate) fn is_writable(&self) -> bool {
+        self.writable
+    }
+
+    pub(crate) fn write_at(&self, buf: &[u8], byte_offset: u64) -> Result<usize> {
+        if !self.writable {
+            return Err(ZonedError::ReadOnly {
+                path: self.path.clone(),
+            });
+        }
+        self.file
+            .write_at(buf, byte_offset)
+            .map_err(|e| ZonedError::Io {
+                path: self.path.clone(),
+                source: e,
+            })
+    }
+
+    pub(crate) fn read_at(&self, buf: &mut [u8], byte_offset: u64) -> Result<usize> {
+        self.file
+            .read_at(buf, byte_offset)
+            .map_err(|e| ZonedError::Io {
+                path: self.path.clone(),
+                source: e,
+            })
     }
 
     pub(crate) fn device_info(&self) -> Result<DeviceInfo> {

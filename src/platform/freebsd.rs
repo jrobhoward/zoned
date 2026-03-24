@@ -45,6 +45,23 @@ impl PlatformDevice {
         Err(ZonedError::UnsupportedPlatform)
     }
 
+    pub(crate) fn open_writable(path: &Path) -> Result<Self> {
+        let _ = path;
+        Err(ZonedError::UnsupportedPlatform)
+    }
+
+    pub(crate) fn is_writable(&self) -> bool {
+        false
+    }
+
+    pub(crate) fn write_at(&self, _buf: &[u8], _byte_offset: u64) -> Result<usize> {
+        Err(ZonedError::UnsupportedPlatform)
+    }
+
+    pub(crate) fn read_at(&self, _buf: &mut [u8], _byte_offset: u64) -> Result<usize> {
+        Err(ZonedError::UnsupportedPlatform)
+    }
+
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }

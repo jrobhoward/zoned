@@ -33,9 +33,13 @@ mod error;
 mod platform;
 pub mod sysfs;
 mod types;
+mod zone_allocator;
+mod zone_handle;
 
 pub use device::ZonedDevice;
 pub use error::{Result, ZonedError};
 pub use types::{
     DeviceInfo, DeviceModel, DeviceProperties, SECTOR_SIZE, Zone, ZoneCondition, ZoneType,
 };
+pub use zone_allocator::ZoneAllocator;
+pub use zone_handle::ZoneHandle;

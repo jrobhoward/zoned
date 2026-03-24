@@ -74,6 +74,40 @@ fn zoned_error____sysfs_parse____display_message() {
 }
 
 #[test]
+fn zoned_error____read_only____display_message() {
+    let err = ZonedError::ReadOnly {
+        path: PathBuf::from("/dev/sdb"),
+    };
+    let msg = format!("{err}");
+    assert!(msg.contains("/dev/sdb"), "Message was: {msg}");
+    assert!(msg.contains("read-only"), "Message was: {msg}");
+}
+
+#[test]
+fn zoned_error____zone_already_allocated____display_message() {
+    let err = ZonedError::ZoneAlreadyAllocated { zone_index: 5 };
+    let msg = format!("{err}");
+    assert!(msg.contains("5"), "Message was: {msg}");
+    assert!(msg.contains("already allocated"), "Message was: {msg}");
+}
+
+#[test]
+fn zoned_error____zone_not_allocated____display_message() {
+    let err = ZonedError::ZoneNotAllocated { zone_index: 7 };
+    let msg = format!("{err}");
+    assert!(msg.contains("7"), "Message was: {msg}");
+    assert!(msg.contains("not allocated"), "Message was: {msg}");
+}
+
+#[test]
+fn zoned_error____zone_full____display_message() {
+    let err = ZonedError::ZoneFull { zone_index: 3 };
+    let msg = format!("{err}");
+    assert!(msg.contains("3"), "Message was: {msg}");
+    assert!(msg.contains("full"), "Message was: {msg}");
+}
+
+#[test]
 fn zoned_error____unsupported_platform____display_message() {
     let err = ZonedError::UnsupportedPlatform;
     let msg = format!("{err}");

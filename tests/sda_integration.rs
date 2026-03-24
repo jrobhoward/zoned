@@ -189,7 +189,10 @@ fn report_zones____sda____zone_starts_are_contiguous() {
     let dev = require_sda!();
 
     let zones = dev.report_zones(0, 64).expect("report_zones failed");
-    assert!(zones.len() >= 2, "need at least 2 zones to check contiguity");
+    assert!(
+        zones.len() >= 2,
+        "need at least 2 zones to check contiguity"
+    );
 
     for pair in zones.windows(2) {
         let expected_next = pair[0].start + pair[0].len;
@@ -287,10 +290,7 @@ fn report_all_zones____sda____small_batch_matches_large_batch() {
 
     // Spot-check a few zones match
     for i in [0, 1, 100, 1000, small.len() - 1] {
-        assert_eq!(
-            small[i], large[i],
-            "zone {i} differs between batch sizes"
-        );
+        assert_eq!(small[i], large[i], "zone {i} differs between batch sizes");
     }
 }
 
@@ -336,7 +336,10 @@ fn report_all_zones____sda____zone_conditions_are_valid() {
     }
 
     eprintln!("Zone census: {conventional} conventional, {seq_required} sequential-write-required");
-    assert!(conventional > 0, "expected at least some conventional zones");
+    assert!(
+        conventional > 0,
+        "expected at least some conventional zones"
+    );
     assert!(seq_required > 0, "expected at least some sequential zones");
     assert_eq!(
         conventional + seq_required,

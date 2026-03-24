@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::{Result, ZonedError};
 use crate::platform::PlatformDevice;
-use crate::types::{DeviceInfo, Zone};
+use crate::types::{DeviceInfo, SECTOR_SIZE, Zone};
 
 /// Handle to an open zoned block device.
 ///
@@ -124,6 +124,56 @@ impl ZonedDevice {
     pub fn finish_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
         self.validate_range(sector, nr_sectors)?;
         self.inner.finish_zones(sector, nr_sectors)
+    }
+
+    /// Open a zoned block device with read-write access.
+    ///
+    /// Required for zone management operations (reset, open, close, finish)
+    /// and data I/O when not running as root. Read-only `open()` is sufficient
+    /// for reporting operations.
+    pub fn open_writable(path: impl AsRef<Path>) -> Result<Self> {
+        let inner = PlatformDevice::open_writable(path.as_ref())?;
+        Ok(Self { inner })
+    }
+
+    /// Returns true if the device was opened with write access.
+    pub fn is_writable(&self) -> bool {
+        self.inner.is_writable()
+    }
+
+    /// Write data at a sector offset.
+    ///
+    /// Uses `pwrite()` internally — does not depend on file position, safe for
+    /// concurrent use from multiple threads (on different sector ranges).
+    ///
+    /// Requires the device to be opened with `open_writable()`.
+    /// Returns `ReadOnly` error if opened read-only.
+    pub fn write_at(&self, sector_offset: u64, buf: &[u8]) -> Result<usize> {
+        let byte_offset =
+            sector_offset
+                .checked_mul(SECTOR_SIZE)
+                .ok_or(ZonedError::InvalidRange {
+                    sector: sector_offset,
+                    nr_sectors: 0,
+                })?;
+        self.inner.write_at(buf, byte_offset)
+    }
+
+    /// Read data at a sector offset.
+    ///
+    /// Uses `pread()` internally — does not depend on file position, safe for
+    /// concurrent use from multiple threads.
+    ///
+    /// Works with both read-only and writable device handles.
+    pub fn read_at(&self, sector_offset: u64, buf: &mut [u8]) -> Result<usize> {
+        let byte_offset =
+            sector_offset
+                .checked_mul(SECTOR_SIZE)
+                .ok_or(ZonedError::InvalidRange {
+                    sector: sector_offset,
+                    nr_sectors: 0,
+                })?;
+        self.inner.read_at(buf, byte_offset)
     }
 
     /// Return the path this device was opened with.

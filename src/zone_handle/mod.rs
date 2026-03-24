@@ -1,0 +1,211 @@
+use std::sync::Arc;
+
+use crate::ZonedDevice;
+use crate::error::{Result, ZonedError};
+use crate::types::{SECTOR_SIZE, Zone};
+use crate::zone_allocator::AllocatorInner;
+
+/// Exclusive handle to a single zone on a zoned block device.
+///
+/// A `ZoneHandle` provides zone-scoped operations with a locally-tracked write
+/// pointer. It is **not `Clone`**, enforcing at compile time that only one owner
+/// can write to a given zone.
+///
+/// Methods that advance the write pointer (`write_sequential`, `reset`, `finish`)
+/// take `&mut self`, preventing concurrent writes to the same zone.
+///
+/// # Example
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use zoned::{ZonedDevice, ZoneHandle};
+///
+/// let dev = Arc::new(ZonedDevice::open_writable("/dev/sdb")?);
+/// let mut handle = ZoneHandle::new(dev, 5)?;
+///
+/// handle.open()?;
+/// let written = handle.write_sequential(&[0u8; 4096])?;
+/// println!("Wrote {} bytes, wp now at sector {}", written, handle.write_pointer());
+/// handle.reset()?;
+/// # Ok::<(), zoned::ZonedError>(())
+/// ```
+pub struct ZoneHandle {
+    device: Arc<ZonedDevice>,
+    zone_index: u32,
+    start: u64,
+    len: u64,
+    capacity: u64,
+    write_pointer: u64,
+    allocator: Option<Arc<AllocatorInner>>,
+}
+
+impl ZoneHandle {
+    /// Create a handle for a specific zone by index.
+    ///
+    /// Queries the device to populate zone metadata (start, length, capacity,
+    /// current write pointer). Does not register with any allocator — the
+    /// caller is responsible for ensuring exclusivity.
+    pub fn new(device: Arc<ZonedDevice>, zone_index: u32) -> Result<Self> {
+        Self::new_inner(device, zone_index, None)
+    }
+
+    /// Create a handle registered with a zone allocator.
+    ///
+    /// The zone will be released back to the allocator when this handle is dropped.
+    pub(crate) fn new_with_allocator(
+        device: Arc<ZonedDevice>,
+        zone_index: u32,
+        allocator: Arc<AllocatorInner>,
+    ) -> Result<Self> {
+        Self::new_inner(device, zone_index, Some(allocator))
+    }
+
+    fn new_inner(
+        device: Arc<ZonedDevice>,
+        zone_index: u32,
+        allocator: Option<Arc<AllocatorInner>>,
+    ) -> Result<Self> {
+        let info = device.device_info()?;
+        let start = zone_index as u64 * info.zone_size as u64;
+        let zones = device.report_zones(start, 1)?;
+
+        if zones.is_empty() {
+            return Err(ZonedError::InvalidRange {
+                sector: start,
+                nr_sectors: 0,
+            });
+        }
+
+        let zone = &zones[0];
+
+        Ok(Self {
+            device,
+            zone_index,
+            start: zone.start,
+            len: zone.len,
+            capacity: zone.capacity,
+            write_pointer: zone.write_pointer,
+            allocator,
+        })
+    }
+
+    /// Write data sequentially at the current write pointer.
+    ///
+    /// The buffer should be aligned to the device's sector size. The write
+    /// pointer advances by the number of bytes written (converted to sectors).
+    ///
+    /// Returns `ZoneFull` if the write pointer has reached the zone's capacity.
+    /// Returns `ReadOnly` if the device was not opened with write access.
+    pub fn write_sequential(&mut self, buf: &[u8]) -> Result<usize> {
+        let capacity_end = self.start + self.capacity;
+        if self.write_pointer >= capacity_end {
+            return Err(ZonedError::ZoneFull {
+                zone_index: self.zone_index,
+            });
+        }
+
+        let written = self.device.write_at(self.write_pointer, buf)?;
+        let sectors_written = written as u64 / SECTOR_SIZE;
+        self.write_pointer += sectors_written;
+        Ok(written)
+    }
+
+    /// Reset this zone's write pointer to the start.
+    ///
+    /// Data in the zone becomes inaccessible.
+    pub fn reset(&mut self) -> Result<()> {
+        self.device.reset_zones(self.start, self.len)?;
+        self.write_pointer = self.start;
+        Ok(())
+    }
+
+    /// Explicitly open this zone.
+    ///
+    /// Transitions the zone to the explicitly-open state.
+    pub fn open(&self) -> Result<()> {
+        self.device.open_zones(self.start, self.len)
+    }
+
+    /// Close this zone.
+    ///
+    /// Transitions to the closed state without resetting the write pointer.
+    pub fn close(&self) -> Result<()> {
+        self.device.close_zones(self.start, self.len)
+    }
+
+    /// Finish (mark as full) this zone.
+    ///
+    /// Advances the write pointer to the end. No more writes are possible
+    /// until the zone is reset.
+    pub fn finish(&mut self) -> Result<()> {
+        self.device.finish_zones(self.start, self.len)?;
+        self.write_pointer = self.start + self.len;
+        Ok(())
+    }
+
+    /// Report the current state of this zone from the device.
+    ///
+    /// This queries the device directly, not the locally-tracked state.
+    pub fn report(&self) -> Result<Zone> {
+        let zones = self.device.report_zones(self.start, 1)?;
+        if zones.is_empty() {
+            return Err(ZonedError::InvalidRange {
+                sector: self.start,
+                nr_sectors: 0,
+            });
+        }
+        Ok(zones[0].clone())
+    }
+
+    /// Start sector of this zone.
+    pub fn start(&self) -> u64 {
+        self.start
+    }
+
+    /// Length of this zone in sectors.
+    pub fn len(&self) -> u64 {
+        self.len
+    }
+
+    /// Returns true if the zone has zero length. Always false for valid zones.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Usable capacity of this zone in sectors.
+    pub fn capacity(&self) -> u64 {
+        self.capacity
+    }
+
+    /// Current locally-tracked write pointer position (in sectors).
+    pub fn write_pointer(&self) -> u64 {
+        self.write_pointer
+    }
+
+    /// Zone index on the device.
+    pub fn zone_index(&self) -> u32 {
+        self.zone_index
+    }
+}
+
+impl Drop for ZoneHandle {
+    fn drop(&mut self) {
+        if let Some(ref allocator) = self.allocator {
+            allocator.release(self.zone_index);
+        }
+    }
+}
+
+impl std::fmt::Debug for ZoneHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ZoneHandle")
+            .field("zone_index", &self.zone_index)
+            .field("start", &self.start)
+            .field("len", &self.len)
+            .field("write_pointer", &self.write_pointer)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod zone_handle_tests;

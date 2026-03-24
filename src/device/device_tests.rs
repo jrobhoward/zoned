@@ -71,6 +71,72 @@ fn validate_range____overflow____returns_invalid_range() {
 }
 
 #[test]
+fn open_writable____nonexistent_device____returns_device_not_found() {
+    let result = ZonedDevice::open_writable("/dev/this_device_does_not_exist_zzz");
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, ZonedError::DeviceNotFound { .. }),
+        "Expected DeviceNotFound, got: {err:?}"
+    );
+}
+
+#[test]
+fn open_writable____regular_file____is_writable() {
+    let tmpfile = tempfile::NamedTempFile::new().unwrap();
+    if let Ok(dev) = ZonedDevice::open_writable(tmpfile.path()) {
+        assert!(dev.is_writable());
+    }
+}
+
+#[test]
+fn is_writable____read_only_open____returns_false() {
+    let tmpfile = tempfile::NamedTempFile::new().unwrap();
+    if let Ok(dev) = ZonedDevice::open(tmpfile.path()) {
+        assert!(!dev.is_writable());
+    }
+}
+
+#[test]
+fn write_at____read_only_device____returns_read_only_error() {
+    let tmpfile = tempfile::NamedTempFile::new().unwrap();
+    if let Ok(dev) = ZonedDevice::open(tmpfile.path()) {
+        let result = dev.write_at(0, &[0u8; 512]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ZonedError::ReadOnly { .. }),
+            "Expected ReadOnly, got: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn write_at____writable_file____succeeds() {
+    let tmpfile = tempfile::NamedTempFile::new().unwrap();
+    if let Ok(dev) = ZonedDevice::open_writable(tmpfile.path()) {
+        let data = vec![0xABu8; 512];
+        let result = dev.write_at(0, &data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 512);
+    }
+}
+
+#[test]
+fn read_at____writable_file____reads_back_written_data() {
+    let tmpfile = tempfile::NamedTempFile::new().unwrap();
+    if let Ok(dev) = ZonedDevice::open_writable(tmpfile.path()) {
+        let data = vec![0xCDu8; 512];
+        dev.write_at(0, &data).unwrap();
+
+        let mut buf = vec![0u8; 512];
+        let n = dev.read_at(0, &mut buf).unwrap();
+        assert_eq!(n, 512);
+        assert_eq!(buf, data);
+    }
+}
+
+#[test]
 fn debug____format____includes_path() {
     let tmpfile = tempfile::NamedTempFile::new().unwrap();
 

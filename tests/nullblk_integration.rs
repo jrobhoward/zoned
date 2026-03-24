@@ -17,7 +17,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use zoned::{DeviceModel, ZoneCondition, ZoneType, ZonedDevice};
+use std::sync::Arc;
+use std::thread;
+
+use zoned::{DeviceModel, ZoneAllocator, ZoneCondition, ZoneHandle, ZoneType, ZonedDevice};
 
 // --- Test device configuration ---
 
@@ -570,4 +573,350 @@ fn debug____nullblk____includes_device_path() {
         debug_str.contains(&nullblk.name),
         "debug output should contain device name, got: {debug_str}"
     );
+}
+
+// ============================================================
+// Writable open + data I/O
+// ============================================================
+
+#[test]
+fn open_writable____nullblk____zone_management_works() {
+    let nullblk = require_nullblk!("nullb_writable");
+    let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
+    assert!(dev.is_writable());
+
+    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
+    let zone_len = ZONE_SIZE_SECTORS as u64;
+
+    dev.open_zones(seq_start, zone_len).expect("open failed");
+    dev.close_zones(seq_start, zone_len).expect("close failed");
+    dev.reset_zones(seq_start, zone_len).expect("reset failed");
+}
+
+#[test]
+fn write_at____nullblk____sequential_write_advances_write_pointer() {
+    let nullblk = require_nullblk!("nullb_write_wp");
+    let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
+
+    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
+    let zone_len = ZONE_SIZE_SECTORS as u64;
+
+    // Write 4096 bytes (8 sectors of 512 bytes) at the write pointer
+    let data = vec![0xAAu8; 4096];
+    let written = dev.write_at(seq_start, &data).expect("write_at failed");
+    assert_eq!(written, 4096);
+
+    // Check that write pointer advanced
+    let zones = dev.report_zones(seq_start, 1).expect("report failed");
+    assert_eq!(
+        zones[0].write_pointer,
+        seq_start + 8, // 4096 / 512 = 8 sectors
+        "write pointer should have advanced by 8 sectors"
+    );
+
+    // Clean up
+    dev.reset_zones(seq_start, zone_len).expect("reset failed");
+}
+
+#[test]
+fn read_at____nullblk____reads_back_written_data() {
+    let nullblk = require_nullblk!("nullb_read_back");
+    let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
+
+    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
+    let zone_len = ZONE_SIZE_SECTORS as u64;
+
+    // Write a known pattern
+    let mut data = vec![0u8; 4096];
+    for (i, byte) in data.iter_mut().enumerate() {
+        *byte = (i % 256) as u8;
+    }
+    dev.write_at(seq_start, &data).expect("write_at failed");
+
+    // Read it back
+    let mut buf = vec![0u8; 4096];
+    let n = dev.read_at(seq_start, &mut buf).expect("read_at failed");
+    assert_eq!(n, 4096);
+    assert_eq!(buf, data, "read data should match written data");
+
+    // Clean up
+    dev.reset_zones(seq_start, zone_len).expect("reset failed");
+}
+
+#[test]
+fn write_at____nullblk____conventional_zone_random_write() {
+    let nullblk = require_nullblk!("nullb_conv_write");
+    let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
+
+    // Write to the middle of the first conventional zone
+    let offset = 1024; // sector 1024 (within first conv zone)
+    let data = vec![0xBBu8; 512];
+    let written = dev.write_at(offset, &data).expect("write_at failed");
+    assert_eq!(written, 512);
+
+    let mut buf = vec![0u8; 512];
+    let n = dev.read_at(offset, &mut buf).expect("read_at failed");
+    assert_eq!(n, 512);
+    assert_eq!(buf, data);
+}
+
+#[test]
+fn write_at____nullblk____read_only_open_returns_error() {
+    let nullblk = require_nullblk!("nullb_ro_write");
+    let dev = ZonedDevice::open(nullblk.path()).expect("open failed");
+
+    let result = dev.write_at(0, &[0u8; 512]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, zoned::ZonedError::ReadOnly { .. }),
+        "Expected ReadOnly, got: {err:?}"
+    );
+}
+
+// ============================================================
+// ZoneHandle tests
+// ============================================================
+
+#[test]
+fn zone_handle____nullblk____write_sequential_advances_write_pointer() {
+    let nullblk = require_nullblk!("nullb_zh_write");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+
+    let first_seq_idx = ZONE_NR_CONV;
+    let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
+
+    let expected_start = first_seq_idx as u64 * ZONE_SIZE_SECTORS as u64;
+    assert_eq!(handle.start(), expected_start);
+    assert_eq!(handle.write_pointer(), expected_start);
+
+    // Write 4096 bytes
+    let data = vec![0xCCu8; 4096];
+    let written = handle
+        .write_sequential(&data)
+        .expect("write_sequential failed");
+    assert_eq!(written, 4096);
+    assert_eq!(handle.write_pointer(), expected_start + 8);
+
+    // Verify against the device
+    let zone = handle.report().expect("report failed");
+    assert_eq!(zone.write_pointer, expected_start + 8);
+
+    // Clean up
+    handle.reset().expect("reset failed");
+}
+
+#[test]
+fn zone_handle____nullblk____reset_resets_write_pointer() {
+    let nullblk = require_nullblk!("nullb_zh_reset");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+
+    let first_seq_idx = ZONE_NR_CONV;
+    let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
+    let start = handle.start();
+
+    handle
+        .write_sequential(&vec![0u8; 4096])
+        .expect("write failed");
+    assert_ne!(handle.write_pointer(), start);
+
+    handle.reset().expect("reset failed");
+    assert_eq!(handle.write_pointer(), start);
+
+    let zone = handle.report().expect("report failed");
+    assert_eq!(zone.condition, ZoneCondition::Empty);
+}
+
+#[test]
+fn zone_handle____nullblk____finish_sets_full() {
+    let nullblk = require_nullblk!("nullb_zh_finish");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+
+    let first_seq_idx = ZONE_NR_CONV;
+    let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
+
+    handle.finish().expect("finish failed");
+
+    let zone = handle.report().expect("report failed");
+    assert_eq!(zone.condition, ZoneCondition::Full);
+    assert_eq!(handle.write_pointer(), handle.start() + handle.len());
+
+    // Clean up
+    handle.reset().expect("reset failed");
+}
+
+#[test]
+fn zone_handle____nullblk____write_then_read_round_trip() {
+    let nullblk = require_nullblk!("nullb_zh_rtrip");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+
+    let first_seq_idx = ZONE_NR_CONV;
+    let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
+
+    let mut data = vec![0u8; 4096];
+    for (i, byte) in data.iter_mut().enumerate() {
+        *byte = (i % 251) as u8; // prime modulus for more interesting pattern
+    }
+    handle.write_sequential(&data).expect("write failed");
+
+    // Read back via the device (ZoneHandle doesn't have read, by design)
+    let mut buf = vec![0u8; 4096];
+    let n = dev.read_at(handle.start(), &mut buf).expect("read failed");
+    assert_eq!(n, 4096);
+    assert_eq!(buf, data);
+
+    handle.reset().expect("reset failed");
+}
+
+// ============================================================
+// ZoneAllocator tests
+// ============================================================
+
+#[test]
+fn zone_allocator____nullblk____allocate_returns_empty_sequential_zone() {
+    let nullblk = require_nullblk!("nullb_za_alloc");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+    let allocator = ZoneAllocator::new(dev);
+
+    let handle = allocator.allocate().expect("allocate failed");
+    assert!(
+        handle.zone_index() >= ZONE_NR_CONV,
+        "should skip conventional zones"
+    );
+    assert!(!handle.is_empty());
+}
+
+#[test]
+fn zone_allocator____nullblk____allocate_zone_specific_index() {
+    let nullblk = require_nullblk!("nullb_za_idx");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+    let allocator = ZoneAllocator::new(dev);
+
+    let zone_idx = ZONE_NR_CONV + 3;
+    let handle = allocator
+        .allocate_zone(zone_idx)
+        .expect("allocate_zone failed");
+    assert_eq!(handle.zone_index(), zone_idx);
+}
+
+#[test]
+fn zone_allocator____nullblk____double_allocate_returns_error() {
+    let nullblk = require_nullblk!("nullb_za_double");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+    let allocator = ZoneAllocator::new(dev);
+
+    let zone_idx = ZONE_NR_CONV;
+    let _handle = allocator
+        .allocate_zone(zone_idx)
+        .expect("first allocate failed");
+
+    let result = allocator.allocate_zone(zone_idx);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, zoned::ZonedError::ZoneAlreadyAllocated { .. }),
+        "Expected ZoneAlreadyAllocated, got: {err:?}"
+    );
+}
+
+#[test]
+fn zone_allocator____nullblk____drop_handle_releases_zone() {
+    let nullblk = require_nullblk!("nullb_za_drop");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+    let allocator = ZoneAllocator::new(dev);
+
+    let zone_idx = ZONE_NR_CONV;
+    {
+        let _handle = allocator.allocate_zone(zone_idx).expect("allocate failed");
+        assert_eq!(allocator.allocated_zones(), vec![zone_idx]);
+    }
+    // Handle dropped — zone should be released
+    assert!(allocator.allocated_zones().is_empty());
+
+    // Should be allocatable again
+    let _handle2 = allocator
+        .allocate_zone(zone_idx)
+        .expect("re-allocate failed");
+}
+
+#[test]
+fn zone_allocator____nullblk____allocated_zones_tracking() {
+    let nullblk = require_nullblk!("nullb_za_track");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+    let allocator = ZoneAllocator::new(dev);
+
+    let _h1 = allocator
+        .allocate_zone(ZONE_NR_CONV)
+        .expect("alloc 1 failed");
+    let _h2 = allocator
+        .allocate_zone(ZONE_NR_CONV + 1)
+        .expect("alloc 2 failed");
+    let _h3 = allocator
+        .allocate_zone(ZONE_NR_CONV + 3)
+        .expect("alloc 3 failed");
+
+    let allocated = allocator.allocated_zones();
+    assert_eq!(
+        allocated,
+        vec![ZONE_NR_CONV, ZONE_NR_CONV + 1, ZONE_NR_CONV + 3]
+    );
+}
+
+// ============================================================
+// Concurrent access
+// ============================================================
+
+#[test]
+fn concurrent____nullblk____parallel_writes_to_different_zones() {
+    let nullblk = require_nullblk!("nullb_concurrent");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+    let allocator = ZoneAllocator::new(dev.clone());
+
+    // Allocate 3 separate zones
+    let mut handle_a = allocator.allocate().expect("allocate A failed");
+    let mut handle_b = allocator.allocate().expect("allocate B failed");
+    let mut handle_c = allocator.allocate().expect("allocate C failed");
+
+    // Each handle goes to a different thread
+    let ta = thread::spawn(move || {
+        let data = vec![0xAAu8; 4096];
+        handle_a.write_sequential(&data).expect("write A failed");
+        handle_a
+    });
+
+    let tb = thread::spawn(move || {
+        let data = vec![0xBBu8; 4096];
+        handle_b.write_sequential(&data).expect("write B failed");
+        handle_b
+    });
+
+    let tc = thread::spawn(move || {
+        let data = vec![0xCCu8; 4096];
+        handle_c.write_sequential(&data).expect("write C failed");
+        handle_c
+    });
+
+    let mut ha = ta.join().expect("thread A panicked");
+    let mut hb = tb.join().expect("thread B panicked");
+    let mut hc = tc.join().expect("thread C panicked");
+
+    // Verify each zone was written correctly
+    let mut buf = vec![0u8; 4096];
+
+    dev.read_at(ha.start(), &mut buf).expect("read A failed");
+    assert!(buf.iter().all(|&b| b == 0xAA), "zone A data mismatch");
+
+    dev.read_at(hb.start(), &mut buf).expect("read B failed");
+    assert!(buf.iter().all(|&b| b == 0xBB), "zone B data mismatch");
+
+    dev.read_at(hc.start(), &mut buf).expect("read C failed");
+    assert!(buf.iter().all(|&b| b == 0xCC), "zone C data mismatch");
+
+    // All three zones should still be allocated
+    assert_eq!(allocator.allocated_zones().len(), 3);
+
+    // Clean up
+    ha.reset().expect("reset A failed");
+    hb.reset().expect("reset B failed");
+    hc.reset().expect("reset C failed");
 }

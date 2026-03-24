@@ -38,6 +38,18 @@ pub enum ZonedError {
     #[error("invalid zone range: sector {sector}, count {nr_sectors}")]
     InvalidRange { sector: u64, nr_sectors: u64 },
 
+    #[error("device opened read-only, write access required: {path}")]
+    ReadOnly { path: PathBuf },
+
+    #[error("zone {zone_index} is already allocated")]
+    ZoneAlreadyAllocated { zone_index: u32 },
+
+    #[error("zone {zone_index} is not allocated")]
+    ZoneNotAllocated { zone_index: u32 },
+
+    #[error("zone {zone_index} is full")]
+    ZoneFull { zone_index: u32 },
+
     #[error("platform not supported for zoned block device operations")]
     UnsupportedPlatform,
 }
