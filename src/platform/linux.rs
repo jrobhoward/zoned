@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::FileExt;
+use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, ZonedError};
@@ -65,10 +65,21 @@ const BLK_ZONE_COND_READONLY: u8 = 0xD;
 const BLK_ZONE_COND_FULL: u8 = 0xE;
 const BLK_ZONE_COND_OFFLINE: u8 = 0xF;
 
-// Generate ioctl request codes using nix macros
+// Generate ioctl request codes using nix macros.
+//
+// BLKREPORTZONE uses a fixed ioctl number based on sizeof(struct blk_zone_report)
+// (the 16-byte header), NOT the variable-length buffer we pass. The kernel's switch
+// statement matches on the exact ioctl command value, so using ioctl_readwrite_buf!
+// (which encodes the runtime buffer size) produces the wrong command number and
+// causes ENOTTY on real SCSI/ATA devices.
 nix::ioctl_read!(blk_get_zone_sz, BLK_IOCTL_MAGIC, BLKGETZONESZ_NR, u32);
 nix::ioctl_read!(blk_get_nr_zones, BLK_IOCTL_MAGIC, BLKGETNRZONES_NR, u32);
-nix::ioctl_readwrite_buf!(blk_report_zones, BLK_IOCTL_MAGIC, BLKREPORTZONE_NR, u8);
+nix::ioctl_readwrite!(
+    blk_report_zones,
+    BLK_IOCTL_MAGIC,
+    BLKREPORTZONE_NR,
+    BlkZoneReportHeader
+);
 nix::ioctl_write_ptr!(
     blk_reset_zones,
     BLK_IOCTL_MAGIC,
@@ -181,8 +192,41 @@ impl PlatformDevice {
         })
     }
 
+    pub(crate) fn open_direct(path: &Path) -> Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_DIRECT)
+            .open(path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ZonedError::DeviceNotFound {
+                        path: path.to_path_buf(),
+                    }
+                } else {
+                    ZonedError::Io {
+                        path: path.to_path_buf(),
+                        source: e,
+                    }
+                }
+            })?;
+
+        Ok(Self {
+            file,
+            path: path.to_path_buf(),
+            writable: true,
+        })
+    }
+
     pub(crate) fn is_writable(&self) -> bool {
         self.writable
+    }
+
+    pub(crate) fn fsync(&self) -> Result<()> {
+        self.file.sync_all().map_err(|e| ZonedError::Io {
+            path: self.path.clone(),
+            source: e,
+        })
     }
 
     pub(crate) fn write_at(&self, buf: &[u8], byte_offset: u64) -> Result<usize> {
@@ -270,14 +314,23 @@ impl PlatformDevice {
             );
         }
 
-        // SAFETY: blk_report_zones performs an IOWR ioctl that reads from and writes
-        // to the provided buffer. The buffer is properly sized to hold the header plus
-        // zone_count zone entries. The fd is a valid open file descriptor.
-        unsafe { blk_report_zones(self.file.as_raw_fd(), &mut buf) }.map_err(|e| {
-            ZonedError::Ioctl {
-                path: self.path.clone(),
-                source: e,
-            }
+        // SAFETY: blk_report_zones performs an IOWR ioctl. The ioctl number is
+        // computed from sizeof(BlkZoneReportHeader) (16 bytes) matching the kernel's
+        // definition. The kernel reads the header from the buffer to get the starting
+        // sector and max zone count, then writes the header + zone entries back.
+        // We pass a pointer to the buffer cast as *mut BlkZoneReportHeader — the
+        // kernel writes beyond the header into the zone entries, which is valid
+        // because our buffer is sized to hold header + zone_count entries.
+        // The fd is a valid open file descriptor.
+        unsafe {
+            blk_report_zones(
+                self.file.as_raw_fd(),
+                buf.as_mut_ptr() as *mut BlkZoneReportHeader,
+            )
+        }
+        .map_err(|e| ZonedError::Ioctl {
+            path: self.path.clone(),
+            source: e,
         })?;
 
         // Parse the response header

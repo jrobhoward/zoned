@@ -136,6 +136,16 @@ impl ZonedDevice {
         Ok(Self { inner })
     }
 
+    /// Open a zoned block device with read-write access and `O_DIRECT`.
+    ///
+    /// Bypasses the kernel page cache — writes go directly to the device.
+    /// Required for accurate I/O benchmarking. Write buffers must be
+    /// aligned to the device's logical block size (typically 4096 bytes).
+    pub fn open_direct(path: impl AsRef<Path>) -> Result<Self> {
+        let inner = PlatformDevice::open_direct(path.as_ref())?;
+        Ok(Self { inner })
+    }
+
     /// Returns true if the device was opened with write access.
     pub fn is_writable(&self) -> bool {
         self.inner.is_writable()
@@ -174,6 +184,15 @@ impl ZonedDevice {
                     nr_sectors: 0,
                 })?;
         self.inner.read_at(buf, byte_offset)
+    }
+
+    /// Flush all pending writes to the device.
+    ///
+    /// Ensures all data written via `write_at` or `write_sequential` (through
+    /// `ZoneHandle`) has been committed to the physical device. Blocks until
+    /// the flush completes.
+    pub fn fsync(&self) -> Result<()> {
+        self.inner.fsync()
     }
 
     /// Return the path this device was opened with.

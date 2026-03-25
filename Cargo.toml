@@ -10,6 +10,7 @@ categories = ["filesystem", "hardware-support", "os::linux-apis"]
 keywords = ["zoned", "smr", "zns", "block-device", "shingled"]
 
 [dependencies]
+libc = "0.2"
 nix = { version = "0.30", features = ["ioctl"] }
 thiserror = "2.0"
 
