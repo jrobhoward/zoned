@@ -72,7 +72,7 @@ fn device_info____sda____returns_correct_zone_size() {
 
     assert_eq!(
         info.zone_size,
-        Sector(EXPECTED_ZONE_SIZE_SECTORS),
+        Sector::new(EXPECTED_ZONE_SIZE_SECTORS),
         "zone_size: expected {EXPECTED_ZONE_SIZE_SECTORS}, got {}",
         info.zone_size
     );
@@ -117,10 +117,13 @@ fn sysfs____sda____properties_match_known_values() {
     let props = zoned::sysfs::device_properties(path).expect("device_properties failed");
 
     assert_eq!(props.model, DeviceModel::HostManaged);
-    assert_eq!(props.chunk_sectors, Sector(EXPECTED_ZONE_SIZE_SECTORS));
-    assert_eq!(props.nr_zones, EXPECTED_NR_ZONES);
-    assert_eq!(props.max_open_zones, Some(EXPECTED_MAX_OPEN));
-    assert_eq!(props.max_active_zones, None); // 0 in sysfs = no limit = None
+    assert_eq!(
+        props.geometry.chunk_sectors,
+        Sector::new(EXPECTED_ZONE_SIZE_SECTORS)
+    );
+    assert_eq!(props.geometry.nr_zones, EXPECTED_NR_ZONES);
+    assert_eq!(props.limits.max_open_zones, Some(EXPECTED_MAX_OPEN));
+    assert_eq!(props.limits.max_active_zones, None); // 0 in sysfs = no limit = None
 }
 
 // ============================================================
@@ -154,8 +157,11 @@ fn report_zones____sda____first_zones_are_conventional() {
             ZoneCondition::NotWritePointer,
             "conventional zone {i} should have NotWritePointer condition"
         );
-        assert_eq!(zone.len, Sector(EXPECTED_ZONE_SIZE_SECTORS));
-        assert_eq!(zone.start, Sector(i as u64 * EXPECTED_ZONE_SIZE_SECTORS));
+        assert_eq!(zone.len, Sector::new(EXPECTED_ZONE_SIZE_SECTORS));
+        assert_eq!(
+            zone.start,
+            Sector::new(i as u64 * EXPECTED_ZONE_SIZE_SECTORS)
+        );
     }
 }
 
@@ -178,7 +184,7 @@ fn report_zones____sda____has_sequential_zones_after_conventional() {
     );
 
     let seq = first_seq.unwrap();
-    assert_eq!(seq.len, Sector(EXPECTED_ZONE_SIZE_SECTORS));
+    assert_eq!(seq.len, Sector::new(EXPECTED_ZONE_SIZE_SECTORS));
     // Write pointer must be within the zone (sequential zones always have Some)
     let wp = seq
         .write_pointer
@@ -225,7 +231,7 @@ fn report_zones____sda____all_zones_have_valid_zone_size() {
     for (i, zone) in zones.iter().enumerate() {
         assert_eq!(
             zone.len,
-            Sector(EXPECTED_ZONE_SIZE_SECTORS),
+            Sector::new(EXPECTED_ZONE_SIZE_SECTORS),
             "zone {i} at sector {} has unexpected length {}",
             zone.start,
             zone.len
@@ -248,7 +254,7 @@ fn report_zones____sda____offset_query_returns_correct_start() {
     let dev = require_sda!();
 
     // Query starting from zone 100
-    let offset_sector = Sector(100 * EXPECTED_ZONE_SIZE_SECTORS);
+    let offset_sector = Sector::new(100 * EXPECTED_ZONE_SIZE_SECTORS);
     let zones = dev
         .report_zones(offset_sector, 4)
         .expect("report_zones at offset failed");
@@ -285,7 +291,7 @@ fn report_all_zones____sda____returns_all_zones() {
     let last = &zones[zones.len() - 1];
     assert_eq!(
         last.start,
-        Sector((EXPECTED_NR_ZONES as u64 - 1) * EXPECTED_ZONE_SIZE_SECTORS)
+        Sector::new((EXPECTED_NR_ZONES as u64 - 1) * EXPECTED_ZONE_SIZE_SECTORS)
     );
 }
 

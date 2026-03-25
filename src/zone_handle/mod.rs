@@ -21,7 +21,7 @@ use crate::zone_allocator::AllocatorInner;
 /// use zoned::{ZonedDevice, ZoneHandle, ZoneIndex};
 ///
 /// let dev = Arc::new(ZonedDevice::open_writable("/dev/sdb")?);
-/// let mut handle = ZoneHandle::new(dev, ZoneIndex(5))?;
+/// let mut handle = ZoneHandle::new(dev, ZoneIndex::new(5))?;
 ///
 /// handle.open()?;
 /// let written = handle.write_sequential(&[0u8; 4096])?;
@@ -94,6 +94,10 @@ impl ZoneHandle {
     /// The buffer should be aligned to the device's sector size. The write
     /// pointer advances by the number of bytes written (converted to sectors).
     ///
+    /// This may perform a **partial write**, returning fewer bytes than
+    /// `buf.len()`. Use [`write_all_sequential`](Self::write_all_sequential)
+    /// to guarantee the entire buffer is written.
+    ///
     /// Returns `ZoneFull` if the write pointer has reached the zone's capacity.
     /// Returns `ReadOnly` if the device was not opened with write access.
     pub fn write_sequential(&mut self, buf: &[u8]) -> Result<usize> {
@@ -125,7 +129,7 @@ impl ZoneHandle {
     /// use zoned::{ZonedDevice, ZoneHandle, ZoneIndex};
     ///
     /// let dev = Arc::new(ZonedDevice::open_writable("/dev/sdb")?);
-    /// let mut handle = ZoneHandle::new(dev, ZoneIndex(5))?;
+    /// let mut handle = ZoneHandle::new(dev, ZoneIndex::new(5))?;
     /// let header = [0xAAu8; 512];
     /// let payload = [0xBBu8; 4096];
     /// let bufs = [IoSlice::new(&header), IoSlice::new(&payload)];
@@ -144,6 +148,27 @@ impl ZoneHandle {
         let sectors_written = Sector(written as u64 / SECTOR_SIZE);
         self.write_pointer += sectors_written;
         Ok(written)
+    }
+
+    /// Write the entire buffer sequentially, looping on partial writes.
+    ///
+    /// Unlike [`write_sequential`](Self::write_sequential), this method
+    /// guarantees that all bytes in `buf` are written before returning.
+    ///
+    /// Returns `ZoneFull` if the zone cannot accommodate the full buffer.
+    /// Returns `ReadOnly` if the device was not opened with write access.
+    pub fn write_all_sequential(&mut self, buf: &[u8]) -> Result<()> {
+        let mut remaining = buf;
+        while !remaining.is_empty() {
+            let written = self.write_sequential(remaining)?;
+            if written == 0 {
+                return Err(ZonedError::ZoneFull {
+                    zone_index: self.zone_index,
+                });
+            }
+            remaining = &remaining[written..];
+        }
+        Ok(())
     }
 
     /// Reset this zone's write pointer to the start.
@@ -224,6 +249,16 @@ impl ZoneHandle {
     }
 }
 
+impl std::io::Write for ZoneHandle {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.write_sequential(buf).map_err(std::io::Error::other)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.device.fsync().map_err(std::io::Error::other)
+    }
+}
+
 impl Drop for ZoneHandle {
     fn drop(&mut self) {
         if let Some(ref allocator) = self.allocator {
@@ -242,6 +277,15 @@ impl std::fmt::Debug for ZoneHandle {
             .finish()
     }
 }
+
+// Compile-time assertion: ZoneHandle is Send (can be moved to another thread)
+// but intentionally NOT Sync (mutable write pointer without interior mutability).
+const _: () = {
+    fn _assert_send<T: Send>() {}
+    fn _assert() {
+        _assert_send::<ZoneHandle>();
+    }
+};
 
 #[cfg(test)]
 mod zone_handle_tests;

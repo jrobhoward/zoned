@@ -10,9 +10,11 @@
 //! [`open_direct`](ZonedDevice::open_direct) for quick access.
 
 mod builder;
+mod cursor;
 mod iter;
 
 pub use builder::DeviceBuilder;
+pub use cursor::ZonedDeviceCursor;
 pub use iter::ZoneIterator;
 
 use std::path::Path;
@@ -189,7 +191,7 @@ impl ZonedDevice {
     ///
     /// Opening a zone transitions it to the explicitly-open state. The device
     /// may have a limit on the number of simultaneously open zones
-    /// (see `DeviceProperties::max_open_zones`).
+    /// (see [`DeviceLimits::max_open_zones`]).
     pub fn open_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
         self.validate_range(sector, nr_sectors)?;
         self.inner.open_zones(sector, nr_sectors)
@@ -243,6 +245,10 @@ impl ZonedDevice {
     /// Uses `pwrite()` internally — does not depend on file position, safe for
     /// concurrent use from multiple threads (on different sector ranges).
     ///
+    /// This may perform a **partial write**, returning fewer bytes than
+    /// `buf.len()`. Use [`write_all_at`](Self::write_all_at) to guarantee the
+    /// entire buffer is written.
+    ///
     /// Requires the device to be opened with `open_writable()`.
     /// Returns `ReadOnly` error if opened read-only.
     pub fn write_at(&self, sector_offset: Sector, buf: &[u8]) -> Result<usize> {
@@ -288,7 +294,7 @@ impl ZonedDevice {
     /// let header = [0xAAu8; 512];
     /// let payload = [0xBBu8; 4096];
     /// let bufs = [IoSlice::new(&header), IoSlice::new(&payload)];
-    /// let written = dev.writev_at(Sector(0), &bufs)?;
+    /// let written = dev.writev_at(Sector::new(0), &bufs)?;
     /// assert_eq!(written, 512 + 4096);
     /// # Ok::<(), zoned::ZonedError>(())
     /// ```
@@ -318,7 +324,7 @@ impl ZonedDevice {
     /// let mut header = [0u8; 512];
     /// let mut payload = [0u8; 4096];
     /// let mut bufs = [IoSliceMut::new(&mut header), IoSliceMut::new(&mut payload)];
-    /// let n = dev.readv_at(Sector(0), &mut bufs)?;
+    /// let n = dev.readv_at(Sector::new(0), &mut bufs)?;
     /// # Ok::<(), zoned::ZonedError>(())
     /// ```
     pub fn readv_at(
@@ -336,6 +342,34 @@ impl ZonedDevice {
         self.inner.readv_at(bufs, byte_offset)
     }
 
+    /// Write the entire buffer at a sector offset, looping on partial writes.
+    ///
+    /// Unlike [`write_at`](Self::write_at), this method guarantees that all
+    /// bytes in `buf` are written before returning. The sector offset advances
+    /// internally as partial writes complete.
+    ///
+    /// Requires the device to be opened with `open_writable()`.
+    pub fn write_all_at(&self, sector_offset: Sector, buf: &[u8]) -> Result<()> {
+        let mut offset = sector_offset;
+        let mut remaining = buf;
+        while !remaining.is_empty() {
+            let written = self.write_at(offset, remaining)?;
+            if written == 0 {
+                return Err(ZonedError::Io {
+                    path: self.path().to_path_buf(),
+                    source: std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "write_at returned 0 bytes",
+                    ),
+                });
+            }
+            remaining = &remaining[written..];
+            let sectors_written = Sector(written as u64 / crate::types::SECTOR_SIZE);
+            offset += sectors_written;
+        }
+        Ok(())
+    }
+
     /// Flush all pending writes to the device.
     ///
     /// Ensures all data written via `write_at` or `write_sequential` (through
@@ -350,6 +384,20 @@ impl ZonedDevice {
         self.inner.path()
     }
 
+    /// Create a cursor at byte position 0.
+    ///
+    /// The cursor implements [`std::io::Read`], [`std::io::Write`], and
+    /// [`std::io::Seek`], translating standard I/O operations into positional
+    /// reads/writes on this device.
+    pub fn cursor(&self) -> ZonedDeviceCursor<'_> {
+        ZonedDeviceCursor::new(self)
+    }
+
+    /// Create a cursor positioned at the given sector.
+    pub fn cursor_at(&self, sector: Sector) -> ZonedDeviceCursor<'_> {
+        ZonedDeviceCursor::at_sector(self, sector)
+    }
+
     fn validate_range(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
         if nr_sectors.0 == 0 {
             return Err(ZonedError::InvalidRange { sector, nr_sectors });
@@ -361,6 +409,17 @@ impl ZonedDevice {
         Ok(())
     }
 }
+
+// Compile-time assertions: ZonedDevice must be Send + Sync so it can be
+// shared across threads via Arc<ZonedDevice>.
+const _: () = {
+    fn _assert_send<T: Send>() {}
+    fn _assert_sync<T: Sync>() {}
+    fn _assert() {
+        _assert_send::<ZonedDevice>();
+        _assert_sync::<ZonedDevice>();
+    }
+};
 
 #[cfg(test)]
 mod device_tests;

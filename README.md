@@ -3,24 +3,27 @@
 Pure Rust library for zoned block device management (SMR/ZNS).
 
 Provides a safe, idiomatic interface for interacting with Shingled Magnetic
-Recording (SMR) hard drives and Zoned Namespace (ZNS) NVMe SSDs on Linux.
+Recording (SMR) hard drives and Zoned Namespace (ZNS) NVMe SSDs.
 
 ## Features
 
 - **Zone reporting** with lazy iteration and client-side filtering
 - **Zone management** — open, close, finish, reset
 - **Data I/O** — positional read/write and vectored (scatter-gather) I/O
+- **Cursor-based I/O** — `ZonedDeviceCursor` implements `std::io::Read`/`Write`/`Seek`
+- **`std::io::Write`** on `ZoneHandle` — enables `BufWriter` and standard I/O adapters
 - **Exclusive zone handles** — compile-time enforcement of single-owner writes via `ZoneHandle`
 - **Thread-safe zone allocation** — `ZoneAllocator` for concurrent multi-zone workloads
 - **Device validation** — block device, mount, partition, and zoned-model checks
 - **Builder pattern** — composable device opening with opt-in validation
 - **Newtype safety** — `Sector` and `ZoneIndex` prevent unit confusion at compile time
 - **sysfs integration** — zone model, block sizes, scheduler, vendor/model, capacity
+- **Async support** — optional `tokio` feature with `AsyncZonedDevice` and `AsyncZoneHandle`
 
 ## Platform Support
 
 - **Linux**: Full support via kernel ioctls and sysfs (kernel 5.9+)
-- **FreeBSD**: Planned
+- **FreeBSD**: Support via `DIOCZONECMD` ioctl
 
 ## Quick Start
 
@@ -67,6 +70,29 @@ std::thread::spawn(move || {
     zone_b.write_sequential(&[0u8; 4096]).unwrap();
 });
 ```
+
+## Async Support
+
+Enable the `tokio` feature for async wrappers:
+
+```toml
+[dependencies]
+zoned = { version = "0.1", features = ["tokio"] }
+```
+
+```rust
+use zoned::{Sector, ZoneIndex, async_api::AsyncZonedDevice};
+
+let dev = AsyncZonedDevice::open_writable("/dev/sdb").await?;
+let zones = dev.report_zones(Sector::ZERO, 16).await?;
+
+let mut handle = dev.zone_handle(ZoneIndex::new(5)).await?;
+handle.write_sequential(vec![0u8; 4096]).await?;
+handle.reset().await?;
+```
+
+All I/O operations are dispatched via `tokio::task::spawn_blocking` — the
+same approach `tokio::fs` uses internally.
 
 ## CLI Tool
 

@@ -53,7 +53,7 @@ fn zoned_error____invalid_range____display_message() {
 #[test]
 fn zoned_error____sysfs____display_message() {
     let err = ZonedError::Sysfs {
-        device: "sdb".to_string(),
+        path: PathBuf::from("/dev/sdb"),
         attribute: "zoned".to_string(),
         source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
     };
@@ -65,7 +65,7 @@ fn zoned_error____sysfs____display_message() {
 #[test]
 fn zoned_error____sysfs_parse____display_message() {
     let err = ZonedError::SysfsParse {
-        device: "sdb".to_string(),
+        path: PathBuf::from("/dev/sdb"),
         attribute: "nr_zones".to_string(),
         value: "not_a_number".to_string(),
     };

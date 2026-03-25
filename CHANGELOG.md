@@ -6,6 +6,42 @@ All notable changes to the `zoned` crate are documented in this file.
 
 ### Added
 
+- **Zone convenience methods**: `Zone::remaining_capacity()`, `is_sequential()`,
+  `is_conventional()`, `is_writable()`, `is_empty()`, `is_full()`.
+
+- **`write_all` variants**: `ZonedDevice::write_all_at()` and
+  `ZoneHandle::write_all_sequential()` loop on partial writes to guarantee
+  complete buffer writes.
+
+- **`std::io::Write` on `ZoneHandle`**: Enables `BufWriter<ZoneHandle>` and
+  standard I/O adapters for sequential zone writes.
+
+- **`ZonedDeviceCursor`**: Cursor type wrapping `ZonedDevice` that implements
+  `std::io::Read`, `Write`, and `Seek`. Created via `dev.cursor()` or
+  `dev.cursor_at(sector)`.
+
+- **Async API** (feature-gated behind `tokio`): `AsyncZonedDevice` and
+  `AsyncZoneHandle` wrap the sync API using `tokio::task::spawn_blocking`.
+
+- **Send/Sync compile-time assertions**: `ZonedDevice` (Send + Sync),
+  `ZoneHandle` (Send only), `ZoneAllocator` (Send + Sync).
+
+- **FreeBSD support**: Full implementation via `DIOCZONECMD` ioctl.
+
+### Changed
+
+- **`Sector` and `ZoneIndex` fields are now private**. Use `Sector::new(val)`
+  and `ZoneIndex::new(val)` constructors. `raw()` accessors remain unchanged.
+
+- **`DeviceProperties` restructured** into sub-structs: `DeviceIdentity`
+  (vendor, model_name), `DeviceGeometry` (chunk_sectors, nr_zones,
+  capacity_sectors), `DeviceLimits` (zone_append_max_bytes, max_open_zones,
+  max_active_zones, max_hw_sectors_kb, max_sectors_kb), `BlockSizes`
+  (logical_block_size, physical_block_size).
+
+- **`ZonedError::Sysfs` and `SysfsParse`**: `device: String` field renamed to
+  `path: PathBuf` for consistency with other error variants.
+
 - **Newtype safety**: `Sector(u64)` and `ZoneIndex(u32)` types replace raw
   integers throughout the public API. `Sector` supports arithmetic (`Add`,
   `Sub`, `Mul<u64>`, `Div<u64>`) and conversion (`to_bytes`, `from_bytes`).
@@ -31,9 +67,10 @@ All notable changes to the `zoned` crate are documented in this file.
 - **Vectored I/O**: `writev_at()` / `readv_at()` on `ZonedDevice` and
   `writev_sequential()` on `ZoneHandle` via `pwritev` / `preadv`.
 
-- **Extended sysfs properties**: `DeviceProperties` now includes
-  `logical_block_size`, `physical_block_size`, `max_hw_sectors_kb`,
-  `max_sectors_kb`, `capacity_sectors`, `scheduler`, `vendor`, `model_name`.
+- **Extended sysfs properties**: `DeviceProperties` includes block sizes,
+  I/O limits, capacity, scheduler, vendor, and model name (organized into
+  `DeviceIdentity`, `DeviceGeometry`, `DeviceLimits`, and `BlockSizes`
+  sub-structs).
 
 - **Display impls**: `ZoneType`, `ZoneCondition`, and `DeviceModel` implement
   `Display` with human-readable strings.
@@ -48,16 +85,16 @@ All notable changes to the `zoned` crate are documented in this file.
 - **`Zone::write_pointer`**: `Sector` -> `Option<Sector>`. Conventional zones
   now return `None` instead of a meaningless sentinel value (`u64::MAX`).
 
-- **`DeviceProperties::max_open_zones`**: `u32` -> `Option<u32>`. `None` means
+- **`DeviceLimits::max_open_zones`**: `u32` -> `Option<u32>`. `None` means
   no device limit (was `0`).
 
-- **`DeviceProperties::max_active_zones`**: `u32` -> `Option<u32>`. Same
+- **`DeviceLimits::max_active_zones`**: `u32` -> `Option<u32>`. Same
   treatment.
 
 - **`DeviceInfo::zone_size`**: Widened from `u32` to `Sector` (wrapping `u64`)
   for consistency with other sector-valued fields.
 
-- **`DeviceProperties::chunk_sectors`**: `u32` -> `Sector`.
+- **`DeviceGeometry::chunk_sectors`**: `u32` -> `Sector`.
 
 - All `ZonedDevice` methods accepting sector offsets or counts now take `Sector`
   instead of `u64`. All zone-index parameters take `ZoneIndex` instead of `u32`.
@@ -84,7 +121,7 @@ Initial release.
 - Linux platform support via kernel ioctls (`BLKREPORTZONE`, `BLKGETZONESZ`,
   `BLKGETNRZONES`, `BLKRESETZONE`, `BLKOPENZONE`, `BLKCLOSEZONE`,
   `BLKFINISHZONE`).
-- FreeBSD stubs (returns `UnsupportedPlatform`).
+- FreeBSD platform stubs.
 - `zone_info` CLI example with `info`, `reset-all`, and `bench` subcommands.
 - Integration tests against null_blk emulated device and real HGST
   HMH7210A0AL drive.

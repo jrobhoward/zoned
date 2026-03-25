@@ -156,5 +156,16 @@ impl ZoneAllocator {
     }
 }
 
+// Compile-time assertions: ZoneAllocator must be Send + Sync for sharing
+// via Arc<ZoneAllocator> across threads.
+const _: () = {
+    fn _assert_send<T: Send>() {}
+    fn _assert_sync<T: Sync>() {}
+    fn _assert() {
+        _assert_send::<ZoneAllocator>();
+        _assert_sync::<ZoneAllocator>();
+    }
+};
+
 #[cfg(test)]
 mod zone_allocator_tests;

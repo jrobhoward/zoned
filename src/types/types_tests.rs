@@ -109,33 +109,44 @@ fn device_model____all_variants____are_distinct() {
 fn device_properties____fields____are_accessible() {
     let props = DeviceProperties {
         model: DeviceModel::HostManaged,
-        chunk_sectors: Sector(524288),
-        nr_zones: 55880,
-        zone_append_max_bytes: 0,
-        max_open_zones: Some(128),
-        max_active_zones: None,
-        logical_block_size: 512,
-        physical_block_size: 4096,
-        max_hw_sectors_kb: 1024,
-        max_sectors_kb: 512,
-        capacity_sectors: Sector(19532873728),
+        identity: DeviceIdentity {
+            vendor: Some("ATA".to_string()),
+            model_name: Some("HGST HMH7210A0AL".to_string()),
+        },
+        geometry: DeviceGeometry {
+            chunk_sectors: Sector(524288),
+            nr_zones: 55880,
+            capacity_sectors: Sector(19532873728),
+        },
+        limits: DeviceLimits {
+            zone_append_max_bytes: 0,
+            max_open_zones: Some(128),
+            max_active_zones: None,
+            max_hw_sectors_kb: 1024,
+            max_sectors_kb: 512,
+        },
+        block_sizes: BlockSizes {
+            logical_block_size: 512,
+            physical_block_size: 4096,
+        },
         scheduler: Some("mq-deadline".to_string()),
-        vendor: Some("ATA".to_string()),
-        model_name: Some("HGST HMH7210A0AL".to_string()),
     };
 
     assert_eq!(props.model, DeviceModel::HostManaged);
-    assert_eq!(props.chunk_sectors, Sector(524288));
-    assert_eq!(props.nr_zones, 55880);
-    assert_eq!(props.zone_append_max_bytes, 0);
-    assert_eq!(props.max_open_zones, Some(128));
-    assert_eq!(props.max_active_zones, None);
-    assert_eq!(props.logical_block_size, 512);
-    assert_eq!(props.physical_block_size, 4096);
-    assert_eq!(props.capacity_sectors, Sector(19532873728));
+    assert_eq!(props.geometry.chunk_sectors, Sector(524288));
+    assert_eq!(props.geometry.nr_zones, 55880);
+    assert_eq!(props.limits.zone_append_max_bytes, 0);
+    assert_eq!(props.limits.max_open_zones, Some(128));
+    assert_eq!(props.limits.max_active_zones, None);
+    assert_eq!(props.block_sizes.logical_block_size, 512);
+    assert_eq!(props.block_sizes.physical_block_size, 4096);
+    assert_eq!(props.geometry.capacity_sectors, Sector(19532873728));
     assert_eq!(props.scheduler.as_deref(), Some("mq-deadline"));
-    assert_eq!(props.vendor.as_deref(), Some("ATA"));
-    assert_eq!(props.model_name.as_deref(), Some("HGST HMH7210A0AL"));
+    assert_eq!(props.identity.vendor.as_deref(), Some("ATA"));
+    assert_eq!(
+        props.identity.model_name.as_deref(),
+        Some("HGST HMH7210A0AL")
+    );
 }
 
 #[test]

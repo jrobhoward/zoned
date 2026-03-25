@@ -23,16 +23,16 @@ pub enum ZonedError {
         source: nix::errno::Errno,
     },
 
-    #[error("failed to read sysfs attribute {attribute} for {device}: {source}")]
+    #[error("failed to read sysfs attribute {attribute} for {path}: {source}")]
     Sysfs {
-        device: String,
+        path: PathBuf,
         attribute: String,
         source: std::io::Error,
     },
 
-    #[error("failed to parse sysfs attribute {attribute} for {device}: {value:?}")]
+    #[error("failed to parse sysfs attribute {attribute} for {path}: {value:?}")]
     SysfsParse {
-        device: String,
+        path: PathBuf,
         attribute: String,
         value: String,
     },

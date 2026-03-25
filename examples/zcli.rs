@@ -476,10 +476,10 @@ fn run_info(
 
     println!("=== Device Identity ===");
     if let Some(ref p) = props {
-        if let Some(ref v) = p.vendor {
+        if let Some(ref v) = p.identity.vendor {
             println!("  Vendor:              {v}");
         }
-        if let Some(ref m) = p.model_name {
+        if let Some(ref m) = p.identity.model_name {
             println!("  Model:               {m}");
         }
         println!("  Zone model:          {}", p.model);
@@ -498,30 +498,42 @@ fn run_info(
     println!("  Number of zones:     {}", info.nr_zones);
 
     if let Some(ref p) = props {
-        if p.capacity_sectors.raw() > 0 {
+        if p.geometry.capacity_sectors.raw() > 0 {
             println!(
                 "  Total capacity:      {} sectors ({:.1} GiB)",
-                p.capacity_sectors,
-                p.capacity_sectors.to_bytes() as f64 / (1024.0 * 1024.0 * 1024.0)
+                p.geometry.capacity_sectors,
+                p.geometry.capacity_sectors.to_bytes() as f64 / (1024.0 * 1024.0 * 1024.0)
             );
         }
-        println!("  Zone append max:     {} bytes", p.zone_append_max_bytes);
-        println!("  Max open zones:      {}", format_limit(p.max_open_zones));
+        println!(
+            "  Zone append max:     {} bytes",
+            p.limits.zone_append_max_bytes
+        );
+        println!(
+            "  Max open zones:      {}",
+            format_limit(p.limits.max_open_zones)
+        );
         println!(
             "  Max active zones:    {}",
-            format_limit(p.max_active_zones)
+            format_limit(p.limits.max_active_zones)
         );
-        if p.logical_block_size > 0 {
-            println!("  Logical block size:  {} bytes", p.logical_block_size);
+        if p.block_sizes.logical_block_size > 0 {
+            println!(
+                "  Logical block size:  {} bytes",
+                p.block_sizes.logical_block_size
+            );
         }
-        if p.physical_block_size > 0 {
-            println!("  Physical block size: {} bytes", p.physical_block_size);
+        if p.block_sizes.physical_block_size > 0 {
+            println!(
+                "  Physical block size: {} bytes",
+                p.block_sizes.physical_block_size
+            );
         }
-        if p.max_sectors_kb > 0 {
-            println!("  Max I/O size:        {} KiB", p.max_sectors_kb);
+        if p.limits.max_sectors_kb > 0 {
+            println!("  Max I/O size:        {} KiB", p.limits.max_sectors_kb);
         }
-        if p.max_hw_sectors_kb > 0 {
-            println!("  Max HW I/O size:     {} KiB", p.max_hw_sectors_kb);
+        if p.limits.max_hw_sectors_kb > 0 {
+            println!("  Max HW I/O size:     {} KiB", p.limits.max_hw_sectors_kb);
         }
     }
     println!();
@@ -829,7 +841,7 @@ fn run_zone_op(
         }
     } else {
         // Use ZoneHandle for single-zone operation
-        let mut handle = ZoneHandle::new(dev, ZoneIndex(zone_idx))?;
+        let mut handle = ZoneHandle::new(dev, ZoneIndex::new(zone_idx))?;
 
         let before = handle.report()?;
         println!(
@@ -952,7 +964,7 @@ fn run_read(
     let dev = ZonedDevice::builder(path).validate_all().open()?;
     let info = dev.device_info()?;
     let zone_start = info.zone_size * zone_idx as u64;
-    let read_sector = zone_start + Sector(offset_sectors);
+    let read_sector = zone_start + Sector::new(offset_sectors);
 
     if let Some(sizes) = scatter {
         // Demonstrate readv_at with scatter buffers
@@ -1022,7 +1034,7 @@ fn run_write(
             .open()?,
     );
 
-    let mut handle = ZoneHandle::new(dev, ZoneIndex(zone_idx))?;
+    let mut handle = ZoneHandle::new(dev, ZoneIndex::new(zone_idx))?;
 
     let before = handle.report()?;
     println!(
@@ -1095,7 +1107,7 @@ fn run_pwrite(
         .validate_all()
         .open()?;
 
-    let offset = Sector(sector);
+    let offset = Sector::new(sector);
     let data = vec![pattern; bytes];
 
     let written = if use_writev {
@@ -1284,7 +1296,7 @@ fn run_boundary_test(path: &Path, skip_confirm: bool) -> Result<(), Box<dyn std:
 
         // First sequential zone: write, verify, reset
         print!("  First seq zone {first_seq_idx}: write 0xCC... ");
-        let mut handle = ZoneHandle::new(dev.clone(), ZoneIndex(first_seq_idx as u32))?;
+        let mut handle = ZoneHandle::new(dev.clone(), ZoneIndex::new(first_seq_idx as u32))?;
         handle.write_sequential(&vec![0xCCu8; 4096])?;
         let mut buf = vec![0u8; 4096];
         dev.read_at(first_seq.start, &mut buf)?;
@@ -1317,7 +1329,7 @@ fn run_boundary_test(path: &Path, skip_confirm: bool) -> Result<(), Box<dyn std:
 
         // Last sequential zone: write, verify, reset
         print!("  Last seq zone {last_seq_idx}: write 0xDD... ");
-        let mut handle = ZoneHandle::new(dev.clone(), ZoneIndex(last_seq_idx as u32))?;
+        let mut handle = ZoneHandle::new(dev.clone(), ZoneIndex::new(last_seq_idx as u32))?;
         handle.write_sequential(&vec![0xDDu8; 4096])?;
         dev.read_at(last_seq.start, &mut buf)?;
         if buf.iter().all(|&b| b == 0xDD) {
@@ -1385,7 +1397,7 @@ fn run_bench(
 
     // sysfs is Linux-only; use device_info for zone size on all platforms.
     let props = sysfs::device_properties(path).ok();
-    let max_open_zones = props.as_ref().and_then(|p| p.max_open_zones);
+    let max_open_zones = props.as_ref().and_then(|p| p.limits.max_open_zones);
 
     if let Some(max_open) = max_open_zones
         && threads > max_open

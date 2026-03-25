@@ -9,15 +9,21 @@ description = "Pure Rust library for zoned block device management (SMR/ZNS)"
 categories = ["filesystem", "hardware-support", "os::linux-apis"]
 keywords = ["zoned", "smr", "zns", "block-device", "shingled"]
 
+[features]
+default = []
+tokio = ["dep:tokio"]
+
 [dependencies]
 libc = "0.2"
 nix = { version = "0.30", features = ["ioctl"] }
 thiserror = "2.0"
+tokio = { version = "1", features = ["rt", "sync"], optional = true }
 
 [dev-dependencies]
 clap = { version = "4.6", features = ["derive"] }
 libc = "0.2"
 tempfile = "3.27"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [lints.clippy]
 cognitive_complexity = "warn"

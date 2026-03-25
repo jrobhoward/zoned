@@ -7,7 +7,7 @@
 //! # Platform Support
 //!
 //! - **Linux**: Full support via kernel ioctls (`BLKREPORTZONE`, etc.) and sysfs.
-//! - **FreeBSD**: Planned support via GEOM `BIO_ZONE` / CAM passthrough.
+//! - **FreeBSD**: Support via `DIOCZONECMD` ioctl.
 //!
 //! # Example
 //!
@@ -16,7 +16,7 @@
 //!
 //! // Check device model via sysfs
 //! let props = sysfs::device_properties("/dev/sdb".as_ref())?;
-//! println!("Model: {:?}, {} zones", props.model, props.nr_zones);
+//! println!("Model: {:?}, {} zones", props.model, props.geometry.nr_zones);
 //!
 //! // Open the device and query zones
 //! let dev = ZonedDevice::open("/dev/sdb")?;
@@ -37,11 +37,14 @@ pub mod validate;
 mod zone_allocator;
 mod zone_handle;
 
-pub use device::{DeviceBuilder, ZoneIterator, ZonedDevice};
+#[cfg(feature = "tokio")]
+pub mod async_api;
+
+pub use device::{DeviceBuilder, ZoneIterator, ZonedDevice, ZonedDeviceCursor};
 pub use error::{Result, ZonedError};
 pub use types::{
-    DeviceInfo, DeviceModel, DeviceProperties, SECTOR_SIZE, Sector, Zone, ZoneCondition,
-    ZoneFilter, ZoneIndex, ZoneType,
+    BlockSizes, DeviceGeometry, DeviceIdentity, DeviceInfo, DeviceLimits, DeviceModel,
+    DeviceProperties, SECTOR_SIZE, Sector, Zone, ZoneCondition, ZoneFilter, ZoneIndex, ZoneType,
 };
 pub use zone_allocator::ZoneAllocator;
 pub use zone_handle::ZoneHandle;

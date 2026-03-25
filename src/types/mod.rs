@@ -9,11 +9,16 @@
 /// - `Sector * u64`, `Sector / u64` (scaling)
 /// - `Sector * Sector` is intentionally **not** supported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct Sector(pub u64);
+pub struct Sector(pub(crate) u64);
 
 impl Sector {
     /// The zero sector.
     pub const ZERO: Sector = Sector(0);
+
+    /// Create a new `Sector` from a raw 512-byte sector count.
+    pub const fn new(value: u64) -> Self {
+        Sector(value)
+    }
 
     /// Convert to bytes (multiply by 512).
     pub fn to_bytes(self) -> u64 {
@@ -86,9 +91,14 @@ impl std::ops::Div<u64> for Sector {
 /// Zone indices are identifiers, not quantities — no arithmetic operators
 /// are provided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ZoneIndex(pub u32);
+pub struct ZoneIndex(pub(crate) u32);
 
 impl ZoneIndex {
+    /// Create a new `ZoneIndex` from a raw zone number.
+    pub const fn new(value: u32) -> Self {
+        ZoneIndex(value)
+    }
+
     /// Get the raw `u32` value.
     pub fn raw(self) -> u32 {
         self.0
@@ -175,43 +185,118 @@ pub enum DeviceModel {
     HostManaged,
 }
 
-/// Extended device information read from sysfs.
+/// Device vendor and model identification from sysfs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceProperties {
-    /// Device model (none, host-aware, host-managed).
-    pub model: DeviceModel,
-    /// Zone size in 512-byte sectors.
-    pub chunk_sectors: Sector,
-    /// Total number of zones.
-    pub nr_zones: u32,
-    /// Maximum bytes for a zone append command (0 if unsupported).
-    pub zone_append_max_bytes: u64,
-    /// Maximum simultaneously open zones. `None` = no device limit.
-    pub max_open_zones: Option<u32>,
-    /// Maximum active zones. `None` = no device limit.
-    pub max_active_zones: Option<u32>,
-    /// Logical block size in bytes (0 if unavailable).
-    pub logical_block_size: u32,
-    /// Physical block size in bytes (0 if unavailable).
-    pub physical_block_size: u32,
-    /// Maximum hardware I/O size in KiB (0 if unavailable).
-    pub max_hw_sectors_kb: u32,
-    /// Maximum software I/O size in KiB (0 if unavailable).
-    pub max_sectors_kb: u32,
-    /// Total device capacity in 512-byte sectors.
-    pub capacity_sectors: Sector,
-    /// Active I/O scheduler (e.g. `"mq-deadline"`), if available.
-    pub scheduler: Option<String>,
+pub struct DeviceIdentity {
     /// Device vendor string from sysfs, if available.
     pub vendor: Option<String>,
     /// Device model name string from sysfs, if available.
     pub model_name: Option<String>,
 }
 
+/// Device geometry: zone layout and capacity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceGeometry {
+    /// Zone size in 512-byte sectors.
+    pub chunk_sectors: Sector,
+    /// Total number of zones.
+    pub nr_zones: u32,
+    /// Total device capacity in 512-byte sectors.
+    pub capacity_sectors: Sector,
+}
+
+/// Device I/O and zone limits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceLimits {
+    /// Maximum bytes for a zone append command (0 if unsupported).
+    pub zone_append_max_bytes: u64,
+    /// Maximum simultaneously open zones. `None` = no device limit.
+    pub max_open_zones: Option<u32>,
+    /// Maximum active zones. `None` = no device limit.
+    pub max_active_zones: Option<u32>,
+    /// Maximum hardware I/O size in KiB (0 if unavailable).
+    pub max_hw_sectors_kb: u32,
+    /// Maximum software I/O size in KiB (0 if unavailable).
+    pub max_sectors_kb: u32,
+}
+
+/// Logical and physical block sizes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockSizes {
+    /// Logical block size in bytes (0 if unavailable).
+    pub logical_block_size: u32,
+    /// Physical block size in bytes (0 if unavailable).
+    pub physical_block_size: u32,
+}
+
+/// Extended device information read from sysfs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceProperties {
+    /// Device model (none, host-aware, host-managed).
+    pub model: DeviceModel,
+    /// Device vendor and model identification.
+    pub identity: DeviceIdentity,
+    /// Zone layout and capacity.
+    pub geometry: DeviceGeometry,
+    /// I/O and zone limits.
+    pub limits: DeviceLimits,
+    /// Logical and physical block sizes.
+    pub block_sizes: BlockSizes,
+    /// Active I/O scheduler (e.g. `"mq-deadline"`), if available.
+    pub scheduler: Option<String>,
+}
+
 /// All sector values in this crate use 512-byte sectors, regardless of the
 /// device's physical or logical block size. This matches the Linux kernel's
 /// zoned block device interface.
 pub const SECTOR_SIZE: u64 = 512;
+
+impl Zone {
+    /// Remaining writable capacity in sectors.
+    ///
+    /// For zones with a write pointer, returns the distance from the write
+    /// pointer to the capacity limit. For conventional zones (no write pointer),
+    /// returns the full capacity.
+    pub fn remaining_capacity(&self) -> Sector {
+        match self.write_pointer {
+            Some(wp) => self.capacity - (wp - self.start),
+            None => self.capacity,
+        }
+    }
+
+    /// Returns `true` if this is a sequential-write zone (required or preferred).
+    pub fn is_sequential(&self) -> bool {
+        matches!(
+            self.zone_type,
+            ZoneType::SequentialWriteRequired | ZoneType::SequentialWritePreferred
+        )
+    }
+
+    /// Returns `true` if this is a conventional (random-write) zone.
+    pub fn is_conventional(&self) -> bool {
+        self.zone_type == ZoneType::Conventional
+    }
+
+    /// Returns `true` if the zone can accept writes.
+    ///
+    /// A zone is writable unless it is read-only, full, or offline.
+    pub fn is_writable(&self) -> bool {
+        !matches!(
+            self.condition,
+            ZoneCondition::ReadOnly | ZoneCondition::Full | ZoneCondition::Offline
+        )
+    }
+
+    /// Returns `true` if the zone is empty (no data written since last reset).
+    pub fn is_empty(&self) -> bool {
+        self.condition == ZoneCondition::Empty
+    }
+
+    /// Returns `true` if the zone is full.
+    pub fn is_full(&self) -> bool {
+        self.condition == ZoneCondition::Full
+    }
+}
 
 impl std::fmt::Display for ZoneType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
