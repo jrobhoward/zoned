@@ -31,7 +31,7 @@ the zone's write pointer, and zones must be explicitly reset before rewriting.
 
 ## Performance Characteristics
 
-All benchmarks used `zone_info bench` with the `zoned` Rust library on
+All benchmarks used `zcli bench` with the `zoned` Rust library on
 Linux 6.8 (`mq-deadline` scheduler). The disk is a single-actuator 7200 RPM
 drive — one head, one platter surface active at a time.
 
@@ -155,16 +155,16 @@ the `zoned` library are designed for that use case as well.
 
 ```bash
 # Build
-cargo build --release --example zone_info
+cargo build --release --example zcli
 
 # Reset all zones first
-sudo ./target/release/examples/zone_info reset-all /dev/sda --yes
+sudo ./target/release/examples/zcli reset /dev/sda --all --yes
 
 # O_DIRECT single-thread baseline
-sudo ./target/release/examples/zone_info bench /dev/sda --o-direct -t 1 -z 4 -b 512 --yes
+sudo ./target/release/examples/zcli bench /dev/sda --o-direct -t 1 -z 4 -b 512 --yes
 
 # Buffered + fsync comparison
-sudo ./target/release/examples/zone_info bench /dev/sda -t 1 -z 4 -b 512 --fsync --yes
-sudo ./target/release/examples/zone_info bench /dev/sda -t 4 -z 1 -b 512 --fsync --yes
-sudo ./target/release/examples/zone_info bench /dev/sda -t 8 -z 1 -b 512 --fsync --yes
+sudo ./target/release/examples/zcli bench /dev/sda -t 1 -z 4 -b 512 --fsync --yes
+sudo ./target/release/examples/zcli bench /dev/sda -t 4 -z 1 -b 512 --fsync --yes
+sudo ./target/release/examples/zcli bench /dev/sda -t 8 -z 1 -b 512 --fsync --yes
 ```

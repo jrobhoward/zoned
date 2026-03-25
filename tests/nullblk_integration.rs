@@ -949,12 +949,18 @@ fn zone_iter____nullblk____matches_report_all_zones() {
     let nullblk = require_nullblk!("nullb_iter_match");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let from_iter: Vec<_> = dev.zone_iter(4).collect::<std::result::Result<Vec<_>, _>>().expect("iter failed");
+    let from_iter: Vec<_> = dev
+        .zone_iter(4)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("iter failed");
     let from_report = dev.report_all_zones(4).expect("report_all_zones failed");
 
     assert_eq!(from_iter.len(), from_report.len());
     for (i, (a, b)) in from_iter.iter().zip(from_report.iter()).enumerate() {
-        assert_eq!(a, b, "zone {i} differs between iterator and report_all_zones");
+        assert_eq!(
+            a, b,
+            "zone {i} differs between iterator and report_all_zones"
+        );
     }
 }
 
@@ -977,7 +983,9 @@ fn report_zones_filtered____nullblk____conventional_only() {
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
     let filter = zoned::ZoneFilter::new().zone_type(ZoneType::Conventional);
-    let zones = dev.report_zones_filtered(&filter, 4).expect("filtered report failed");
+    let zones = dev
+        .report_zones_filtered(&filter, 4)
+        .expect("filtered report failed");
 
     assert_eq!(
         zones.len(),
@@ -998,7 +1006,9 @@ fn report_zones_filtered____nullblk____empty_sequential() {
     let filter = zoned::ZoneFilter::new()
         .zone_type(ZoneType::SequentialWriteRequired)
         .condition(ZoneCondition::Empty);
-    let zones = dev.report_zones_filtered(&filter, 8).expect("filtered report failed");
+    let zones = dev
+        .report_zones_filtered(&filter, 8)
+        .expect("filtered report failed");
 
     let expected_seq = EXPECTED_NR_ZONES - ZONE_NR_CONV;
     assert_eq!(
@@ -1018,8 +1028,13 @@ fn report_zones_filtered____nullblk____no_match_returns_empty() {
     let filter = zoned::ZoneFilter::new()
         .zone_type(ZoneType::Conventional)
         .condition(ZoneCondition::Empty);
-    let zones = dev.report_zones_filtered(&filter, 8).expect("filtered report failed");
-    assert!(zones.is_empty(), "expected no zones matching impossible filter");
+    let zones = dev
+        .report_zones_filtered(&filter, 8)
+        .expect("filtered report failed");
+    assert!(
+        zones.is_empty(),
+        "expected no zones matching impossible filter"
+    );
 }
 
 // ============================================================
@@ -1036,18 +1051,22 @@ fn writev_at____nullblk____writes_scattered_buffers() {
 
     let buf_a = vec![0xAAu8; 2048];
     let buf_b = vec![0xBBu8; 2048];
-    let bufs = [
-        std::io::IoSlice::new(&buf_a),
-        std::io::IoSlice::new(&buf_b),
-    ];
+    let bufs = [std::io::IoSlice::new(&buf_a), std::io::IoSlice::new(&buf_b)];
     let written = dev.writev_at(seq_start, &bufs).expect("writev_at failed");
     assert_eq!(written, 4096);
 
     // Read back and verify
     let mut readback = vec![0u8; 4096];
-    dev.read_at(seq_start, &mut readback).expect("read_at failed");
-    assert!(readback[..2048].iter().all(|&b| b == 0xAA), "first half mismatch");
-    assert!(readback[2048..].iter().all(|&b| b == 0xBB), "second half mismatch");
+    dev.read_at(seq_start, &mut readback)
+        .expect("read_at failed");
+    assert!(
+        readback[..2048].iter().all(|&b| b == 0xAA),
+        "first half mismatch"
+    );
+    assert!(
+        readback[2048..].iter().all(|&b| b == 0xBB),
+        "second half mismatch"
+    );
 
     dev.reset_zones(seq_start, zone_len).expect("reset failed");
 }
@@ -1074,8 +1093,14 @@ fn readv_at____nullblk____reads_into_scattered_buffers() {
     ];
     let n = dev.readv_at(seq_start, &mut bufs).expect("readv_at failed");
     assert_eq!(n, 4096);
-    assert!(buf_a.iter().all(|&b| b == 0xCC), "first scatter buf mismatch");
-    assert!(buf_b.iter().all(|&b| b == 0xDD), "second scatter buf mismatch");
+    assert!(
+        buf_a.iter().all(|&b| b == 0xCC),
+        "first scatter buf mismatch"
+    );
+    assert!(
+        buf_b.iter().all(|&b| b == 0xDD),
+        "second scatter buf mismatch"
+    );
 
     dev.reset_zones(seq_start, zone_len).expect("reset failed");
 }
@@ -1091,19 +1116,24 @@ fn writev_sequential____nullblk____advances_write_pointer() {
 
     let buf_a = vec![0xEEu8; 2048];
     let buf_b = vec![0xFFu8; 2048];
-    let bufs = [
-        std::io::IoSlice::new(&buf_a),
-        std::io::IoSlice::new(&buf_b),
-    ];
-    let written = handle.writev_sequential(&bufs).expect("writev_sequential failed");
+    let bufs = [std::io::IoSlice::new(&buf_a), std::io::IoSlice::new(&buf_b)];
+    let written = handle
+        .writev_sequential(&bufs)
+        .expect("writev_sequential failed");
     assert_eq!(written, 4096);
     assert_eq!(handle.write_pointer(), start + Sector(8)); // 4096 / 512 = 8
 
     // Read back via device to verify
     let mut readback = vec![0u8; 4096];
     dev.read_at(start, &mut readback).expect("read failed");
-    assert!(readback[..2048].iter().all(|&b| b == 0xEE), "first half mismatch");
-    assert!(readback[2048..].iter().all(|&b| b == 0xFF), "second half mismatch");
+    assert!(
+        readback[..2048].iter().all(|&b| b == 0xEE),
+        "first half mismatch"
+    );
+    assert!(
+        readback[2048..].iter().all(|&b| b == 0xFF),
+        "second half mismatch"
+    );
 
     handle.reset().expect("reset failed");
 }

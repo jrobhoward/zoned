@@ -184,7 +184,10 @@ mod validate_tests {
         // A regular file is never mounted, so this should pass.
         let tmpfile = tempfile::NamedTempFile::new().unwrap();
         let result = is_not_mounted(tmpfile.path());
-        assert!(result.is_ok(), "regular file should not be mounted: {result:?}");
+        assert!(
+            result.is_ok(),
+            "regular file should not be mounted: {result:?}"
+        );
     }
 
     #[test]
