@@ -252,6 +252,20 @@ enum Commands {
         checks: Vec<ValidateCheck>,
     },
 
+    /// Test boundary zones: first/last conventional and sequential (DESTRUCTIVE)
+    ///
+    /// Writes to and verifies the first and last conventional zones (random
+    /// write, rewrite with different pattern) and the first and last
+    /// sequential zones (sequential write, reset, verify).
+    BoundaryTest {
+        /// Path to the block device
+        device: PathBuf,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Concurrent sequential write benchmark (DESTRUCTIVE)
     Bench {
         /// Path to the block device
@@ -417,6 +431,7 @@ fn main() {
             ref device,
             ref checks,
         } => run_validate(device, checks),
+        Commands::BoundaryTest { ref device, yes } => run_boundary_test(device, yes),
         Commands::Bench {
             ref device,
             threads,
@@ -1152,6 +1167,191 @@ fn run_validate(path: &Path, checks: &[ValidateCheck]) -> Result<(), Box<dyn std
 
     println!();
     println!("{passed} passed, {failed} failed");
+    if failed > 0 {
+        process::exit(1);
+    }
+    Ok(())
+}
+
+// ============================================================
+// Boundary Test subcommand
+// ============================================================
+
+fn run_boundary_test(path: &Path, skip_confirm: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if !skip_confirm {
+        println!(
+            "WARNING: This will WRITE to boundary zones on {}.",
+            path.display()
+        );
+        confirm()?;
+    }
+
+    let dev = Arc::new(
+        ZonedDevice::builder(path)
+            .writable()
+            .validate_all()
+            .open()?,
+    );
+    let info = dev.device_info()?;
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+
+    // Discover zone layout
+    let first_zones = dev.report_zones(Sector::ZERO, 1)?;
+    if first_zones.is_empty() {
+        return Err("no zones found".into());
+    }
+
+    // Find first and last conventional zones
+    let conv_filter = ZoneFilter::new().zone_type(ZoneType::Conventional);
+    let conv_zones = dev.report_zones_filtered(&conv_filter, 512)?;
+
+    // Find first and last sequential zones
+    let seq_filter = ZoneFilter::new()
+        .zone_type(ZoneType::SequentialWriteRequired)
+        .condition(ZoneCondition::Empty);
+    let seq_zones = dev.report_zones_filtered(&seq_filter, 512)?;
+
+    println!("=== Device Layout ===");
+    println!("  Zone size:         {} sectors", info.zone_size);
+    println!("  Total zones:       {}", info.nr_zones);
+    println!("  Conventional:      {}", conv_zones.len());
+    println!("  Sequential (empty): {}", seq_zones.len());
+    println!();
+
+    // --- Conventional zone tests ---
+    if conv_zones.len() >= 2 {
+        let first_conv = &conv_zones[0];
+        let last_conv = &conv_zones[conv_zones.len() - 1];
+        let first_conv_idx = first_conv.start.raw() / info.zone_size.raw();
+        let last_conv_idx = last_conv.start.raw() / info.zone_size.raw();
+
+        println!("=== Conventional Zone Boundary Tests ===");
+
+        // First conventional zone: write, verify, rewrite, verify
+        print!("  First conv zone {first_conv_idx}: write 0xAA... ");
+        dev.write_at(first_conv.start, &vec![0xAAu8; 4096])?;
+        let mut buf = vec![0u8; 4096];
+        dev.read_at(first_conv.start, &mut buf)?;
+        if buf.iter().all(|&b| b == 0xAA) {
+            print!("OK, rewrite 0x55... ");
+            dev.write_at(first_conv.start, &vec![0x55u8; 4096])?;
+            dev.read_at(first_conv.start, &mut buf)?;
+            if buf.iter().all(|&b| b == 0x55) {
+                println!("OK");
+                passed += 1;
+            } else {
+                println!("FAIL (rewrite verify)");
+                failed += 1;
+            }
+        } else {
+            println!("FAIL (initial verify)");
+            failed += 1;
+        }
+
+        // Last conventional zone: write, verify, rewrite, verify
+        print!("  Last conv zone {last_conv_idx}: write 0xBB... ");
+        dev.write_at(last_conv.start, &vec![0xBBu8; 4096])?;
+        dev.read_at(last_conv.start, &mut buf)?;
+        if buf.iter().all(|&b| b == 0xBB) {
+            print!("OK, rewrite 0x66... ");
+            dev.write_at(last_conv.start, &vec![0x66u8; 4096])?;
+            dev.read_at(last_conv.start, &mut buf)?;
+            if buf.iter().all(|&b| b == 0x66) {
+                println!("OK");
+                passed += 1;
+            } else {
+                println!("FAIL (rewrite verify)");
+                failed += 1;
+            }
+        } else {
+            println!("FAIL (initial verify)");
+            failed += 1;
+        }
+    } else {
+        println!("  Skipping conventional tests (need >= 2 conventional zones)");
+    }
+
+    // --- Sequential zone tests ---
+    if seq_zones.len() >= 2 {
+        let first_seq = &seq_zones[0];
+        let last_seq = &seq_zones[seq_zones.len() - 1];
+        let first_seq_idx = first_seq.start.raw() / info.zone_size.raw();
+        let last_seq_idx = last_seq.start.raw() / info.zone_size.raw();
+
+        println!();
+        println!("=== Sequential Zone Boundary Tests ===");
+
+        // First sequential zone: write, verify, reset
+        print!("  First seq zone {first_seq_idx}: write 0xCC... ");
+        let mut handle = ZoneHandle::new(dev.clone(), ZoneIndex(first_seq_idx as u32))?;
+        handle.write_sequential(&vec![0xCCu8; 4096])?;
+        let mut buf = vec![0u8; 4096];
+        dev.read_at(first_seq.start, &mut buf)?;
+        if buf.iter().all(|&b| b == 0xCC) {
+            println!("OK, reset... ");
+            handle.reset()?;
+            let zone = handle.report()?;
+            if zone.condition == ZoneCondition::Empty {
+                print!("    Reset OK, rewrite 0x33... ");
+                handle.write_sequential(&vec![0x33u8; 4096])?;
+                dev.read_at(first_seq.start, &mut buf)?;
+                if buf.iter().all(|&b| b == 0x33) {
+                    println!("OK");
+                    passed += 1;
+                } else {
+                    println!("FAIL (rewrite verify)");
+                    failed += 1;
+                }
+                handle.reset()?;
+            } else {
+                println!("FAIL (not empty after reset)");
+                failed += 1;
+            }
+        } else {
+            println!("FAIL (initial verify)");
+            failed += 1;
+            handle.reset()?;
+        }
+        drop(handle);
+
+        // Last sequential zone: write, verify, reset
+        print!("  Last seq zone {last_seq_idx}: write 0xDD... ");
+        let mut handle = ZoneHandle::new(dev.clone(), ZoneIndex(last_seq_idx as u32))?;
+        handle.write_sequential(&vec![0xDDu8; 4096])?;
+        dev.read_at(last_seq.start, &mut buf)?;
+        if buf.iter().all(|&b| b == 0xDD) {
+            println!("OK, reset... ");
+            handle.reset()?;
+            let zone = handle.report()?;
+            if zone.condition == ZoneCondition::Empty {
+                print!("    Reset OK, rewrite 0x44... ");
+                handle.write_sequential(&vec![0x44u8; 4096])?;
+                dev.read_at(last_seq.start, &mut buf)?;
+                if buf.iter().all(|&b| b == 0x44) {
+                    println!("OK");
+                    passed += 1;
+                } else {
+                    println!("FAIL (rewrite verify)");
+                    failed += 1;
+                }
+                handle.reset()?;
+            } else {
+                println!("FAIL (not empty after reset)");
+                failed += 1;
+            }
+        } else {
+            println!("FAIL (initial verify)");
+            failed += 1;
+            handle.reset()?;
+        }
+    } else {
+        println!("  Skipping sequential tests (need >= 2 empty sequential zones)");
+    }
+
+    println!();
+    println!("=== Results ===");
+    println!("  {passed} passed, {failed} failed");
     if failed > 0 {
         process::exit(1);
     }

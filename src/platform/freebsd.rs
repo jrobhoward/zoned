@@ -172,11 +172,14 @@ fn parse_zone_condition(raw: u8) -> ZoneCondition {
 /// Convert a zone report entry from device LBAs to 512-byte sectors.
 fn entry_to_zone(entry: &DiskZoneRepEntry, lba_scale: u64) -> Zone {
     let condition = parse_zone_condition(entry.zone_condition);
-    let write_pointer = if condition == ZoneCondition::NotWritePointer {
-        None
-    } else {
-        Some(Sector(entry.write_pointer_lba * lba_scale))
-    };
+    // FreeBSD returns 0xFFFFFFFFFFFFFFFF for zones without a meaningful
+    // write pointer (conventional zones, and sometimes full zones).
+    let write_pointer =
+        if condition == ZoneCondition::NotWritePointer || entry.write_pointer_lba == u64::MAX {
+            None
+        } else {
+            Some(Sector(entry.write_pointer_lba * lba_scale))
+        };
     Zone {
         start: Sector(entry.zone_start_lba * lba_scale),
         len: Sector(entry.zone_length * lba_scale),
