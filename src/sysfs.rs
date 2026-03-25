@@ -1,3 +1,10 @@
+//! Query zoned block device properties via sysfs.
+//!
+//! Linux exposes device attributes under `/sys/block/<device>/queue/`
+//! (zone model, zone size, zone count, max open/active zones) and
+//! `/sys/block/<device>/device/` (vendor, model name). These functions
+//! read those attributes without opening the device.
+
 use std::fs;
 use std::path::Path;
 

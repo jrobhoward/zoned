@@ -116,6 +116,22 @@ impl ZoneHandle {
     /// The write pointer advances by the total number of bytes written.
     ///
     /// Returns `ZoneFull` if the write pointer has reached the zone's capacity.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::io::IoSlice;
+    /// use std::sync::Arc;
+    /// use zoned::{ZonedDevice, ZoneHandle, ZoneIndex};
+    ///
+    /// let dev = Arc::new(ZonedDevice::open_writable("/dev/sdb")?);
+    /// let mut handle = ZoneHandle::new(dev, ZoneIndex(5))?;
+    /// let header = [0xAAu8; 512];
+    /// let payload = [0xBBu8; 4096];
+    /// let bufs = [IoSlice::new(&header), IoSlice::new(&payload)];
+    /// let written = handle.writev_sequential(&bufs)?;
+    /// # Ok::<(), zoned::ZonedError>(())
+    /// ```
     pub fn writev_sequential(&mut self, bufs: &[std::io::IoSlice<'_>]) -> Result<usize> {
         let capacity_end = self.start + self.capacity;
         if self.write_pointer >= capacity_end {

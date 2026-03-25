@@ -927,3 +927,289 @@ fn concurrent____nullblk____parallel_writes_to_different_zones() {
     hb.reset().expect("reset B failed");
     hc.reset().expect("reset C failed");
 }
+
+// ============================================================
+// ZoneIterator tests
+// ============================================================
+
+#[test]
+fn zone_iter____nullblk____yields_all_zones() {
+    let nullblk = require_nullblk!("nullb_iter_all");
+    let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
+
+    let count = dev.zone_iter(4).filter_map(|r| r.ok()).count();
+    assert_eq!(
+        count, EXPECTED_NR_ZONES as usize,
+        "zone_iter should yield all {EXPECTED_NR_ZONES} zones, got {count}"
+    );
+}
+
+#[test]
+fn zone_iter____nullblk____matches_report_all_zones() {
+    let nullblk = require_nullblk!("nullb_iter_match");
+    let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
+
+    let from_iter: Vec<_> = dev.zone_iter(4).collect::<std::result::Result<Vec<_>, _>>().expect("iter failed");
+    let from_report = dev.report_all_zones(4).expect("report_all_zones failed");
+
+    assert_eq!(from_iter.len(), from_report.len());
+    for (i, (a, b)) in from_iter.iter().zip(from_report.iter()).enumerate() {
+        assert_eq!(a, b, "zone {i} differs between iterator and report_all_zones");
+    }
+}
+
+#[test]
+fn zone_iter____nullblk____batch_size_1_works() {
+    let nullblk = require_nullblk!("nullb_iter_b1");
+    let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
+
+    let count = dev.zone_iter(1).filter_map(|r| r.ok()).count();
+    assert_eq!(count, EXPECTED_NR_ZONES as usize);
+}
+
+// ============================================================
+// report_zones_filtered tests
+// ============================================================
+
+#[test]
+fn report_zones_filtered____nullblk____conventional_only() {
+    let nullblk = require_nullblk!("nullb_filt_conv");
+    let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
+
+    let filter = zoned::ZoneFilter::new().zone_type(ZoneType::Conventional);
+    let zones = dev.report_zones_filtered(&filter, 4).expect("filtered report failed");
+
+    assert_eq!(
+        zones.len(),
+        ZONE_NR_CONV as usize,
+        "expected {ZONE_NR_CONV} conventional zones, got {}",
+        zones.len()
+    );
+    for zone in &zones {
+        assert_eq!(zone.zone_type, ZoneType::Conventional);
+    }
+}
+
+#[test]
+fn report_zones_filtered____nullblk____empty_sequential() {
+    let nullblk = require_nullblk!("nullb_filt_seq");
+    let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
+
+    let filter = zoned::ZoneFilter::new()
+        .zone_type(ZoneType::SequentialWriteRequired)
+        .condition(ZoneCondition::Empty);
+    let zones = dev.report_zones_filtered(&filter, 8).expect("filtered report failed");
+
+    let expected_seq = EXPECTED_NR_ZONES - ZONE_NR_CONV;
+    assert_eq!(
+        zones.len(),
+        expected_seq as usize,
+        "expected {expected_seq} empty sequential zones on fresh device, got {}",
+        zones.len()
+    );
+}
+
+#[test]
+fn report_zones_filtered____nullblk____no_match_returns_empty() {
+    let nullblk = require_nullblk!("nullb_filt_none");
+    let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
+
+    // No zones should be both conventional and empty (conventional zones are NotWritePointer)
+    let filter = zoned::ZoneFilter::new()
+        .zone_type(ZoneType::Conventional)
+        .condition(ZoneCondition::Empty);
+    let zones = dev.report_zones_filtered(&filter, 8).expect("filtered report failed");
+    assert!(zones.is_empty(), "expected no zones matching impossible filter");
+}
+
+// ============================================================
+// Vectored I/O tests
+// ============================================================
+
+#[test]
+fn writev_at____nullblk____writes_scattered_buffers() {
+    let nullblk = require_nullblk!("nullb_writev");
+    let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
+
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
+
+    let buf_a = vec![0xAAu8; 2048];
+    let buf_b = vec![0xBBu8; 2048];
+    let bufs = [
+        std::io::IoSlice::new(&buf_a),
+        std::io::IoSlice::new(&buf_b),
+    ];
+    let written = dev.writev_at(seq_start, &bufs).expect("writev_at failed");
+    assert_eq!(written, 4096);
+
+    // Read back and verify
+    let mut readback = vec![0u8; 4096];
+    dev.read_at(seq_start, &mut readback).expect("read_at failed");
+    assert!(readback[..2048].iter().all(|&b| b == 0xAA), "first half mismatch");
+    assert!(readback[2048..].iter().all(|&b| b == 0xBB), "second half mismatch");
+
+    dev.reset_zones(seq_start, zone_len).expect("reset failed");
+}
+
+#[test]
+fn readv_at____nullblk____reads_into_scattered_buffers() {
+    let nullblk = require_nullblk!("nullb_readv");
+    let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
+
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
+
+    // Write a known pattern: 2048 bytes of 0xCC then 2048 bytes of 0xDD
+    let mut data = vec![0xCCu8; 2048];
+    data.extend_from_slice(&[0xDDu8; 2048]);
+    dev.write_at(seq_start, &data).expect("write_at failed");
+
+    // Read back with scatter
+    let mut buf_a = vec![0u8; 2048];
+    let mut buf_b = vec![0u8; 2048];
+    let mut bufs = [
+        std::io::IoSliceMut::new(&mut buf_a),
+        std::io::IoSliceMut::new(&mut buf_b),
+    ];
+    let n = dev.readv_at(seq_start, &mut bufs).expect("readv_at failed");
+    assert_eq!(n, 4096);
+    assert!(buf_a.iter().all(|&b| b == 0xCC), "first scatter buf mismatch");
+    assert!(buf_b.iter().all(|&b| b == 0xDD), "second scatter buf mismatch");
+
+    dev.reset_zones(seq_start, zone_len).expect("reset failed");
+}
+
+#[test]
+fn writev_sequential____nullblk____advances_write_pointer() {
+    let nullblk = require_nullblk!("nullb_writev_seq");
+    let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
+
+    let first_seq_idx = ZoneIndex(ZONE_NR_CONV);
+    let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
+    let start = handle.start();
+
+    let buf_a = vec![0xEEu8; 2048];
+    let buf_b = vec![0xFFu8; 2048];
+    let bufs = [
+        std::io::IoSlice::new(&buf_a),
+        std::io::IoSlice::new(&buf_b),
+    ];
+    let written = handle.writev_sequential(&bufs).expect("writev_sequential failed");
+    assert_eq!(written, 4096);
+    assert_eq!(handle.write_pointer(), start + Sector(8)); // 4096 / 512 = 8
+
+    // Read back via device to verify
+    let mut readback = vec![0u8; 4096];
+    dev.read_at(start, &mut readback).expect("read failed");
+    assert!(readback[..2048].iter().all(|&b| b == 0xEE), "first half mismatch");
+    assert!(readback[2048..].iter().all(|&b| b == 0xFF), "second half mismatch");
+
+    handle.reset().expect("reset failed");
+}
+
+// ============================================================
+// DeviceBuilder tests
+// ============================================================
+
+#[test]
+fn builder____nullblk____open_read_only() {
+    let nullblk = require_nullblk!("nullb_bld_ro");
+    let dev = ZonedDevice::builder(nullblk.path())
+        .open()
+        .expect("builder open failed");
+    assert!(!dev.is_writable());
+}
+
+#[test]
+fn builder____nullblk____open_writable() {
+    let nullblk = require_nullblk!("nullb_bld_wr");
+    let dev = ZonedDevice::builder(nullblk.path())
+        .writable()
+        .open()
+        .expect("builder writable open failed");
+    assert!(dev.is_writable());
+}
+
+#[test]
+fn builder____nullblk____open_direct_io() {
+    let nullblk = require_nullblk!("nullb_bld_dio");
+    let dev = ZonedDevice::builder(nullblk.path())
+        .direct_io()
+        .open()
+        .expect("builder direct_io open failed");
+    assert!(dev.is_writable());
+}
+
+#[test]
+fn builder____nullblk____validate_all_passes() {
+    let nullblk = require_nullblk!("nullb_bld_val");
+    let dev = ZonedDevice::builder(nullblk.path())
+        .validate_all()
+        .open()
+        .expect("builder validate_all should pass on a zoned block device");
+    let _ = dev.device_info().expect("device_info failed");
+}
+
+#[test]
+fn builder____nullblk____validate_individual_checks_pass() {
+    let nullblk = require_nullblk!("nullb_bld_indv");
+    let dev = ZonedDevice::builder(nullblk.path())
+        .validate_block_device()
+        .validate_not_mounted()
+        .validate_no_partitions()
+        .validate_is_zoned()
+        .open()
+        .expect("individual validate checks should pass on a zoned block device");
+    let _ = dev.device_info().expect("device_info failed");
+}
+
+#[test]
+fn builder____nonexistent____validate_block_device_fails() {
+    let result = ZonedDevice::builder("/dev/this_does_not_exist_zzz")
+        .validate_block_device()
+        .open();
+    assert!(result.is_err());
+}
+
+#[test]
+fn builder____tmpfile____validate_block_device_fails() {
+    let tmpfile = tempfile::NamedTempFile::new().expect("tmpfile failed");
+    let result = ZonedDevice::builder(tmpfile.path())
+        .validate_block_device()
+        .open();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, zoned::ZonedError::NotABlockDevice { .. }),
+        "Expected NotABlockDevice, got: {err:?}"
+    );
+}
+
+// ============================================================
+// Validate module tests (against real null_blk device)
+// ============================================================
+
+#[test]
+fn validate____nullblk____is_block_device_passes() {
+    let nullblk = require_nullblk!("nullb_val_blk");
+    zoned::validate::is_block_device(nullblk.path()).expect("is_block_device should pass");
+}
+
+#[test]
+fn validate____nullblk____is_not_mounted_passes() {
+    let nullblk = require_nullblk!("nullb_val_mnt");
+    zoned::validate::is_not_mounted(nullblk.path()).expect("is_not_mounted should pass");
+}
+
+#[test]
+fn validate____nullblk____has_no_partitions_passes() {
+    let nullblk = require_nullblk!("nullb_val_part");
+    zoned::validate::has_no_partitions(nullblk.path()).expect("has_no_partitions should pass");
+}
+
+#[test]
+fn validate____nullblk____is_zoned_device_passes() {
+    let nullblk = require_nullblk!("nullb_val_zoned");
+    zoned::validate::is_zoned_device(nullblk.path()).expect("is_zoned_device should pass");
+}

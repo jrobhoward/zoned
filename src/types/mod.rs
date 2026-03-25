@@ -22,7 +22,7 @@ impl Sector {
 
     /// Convert from a byte count. Returns `None` if not sector-aligned.
     pub fn from_bytes(bytes: u64) -> Option<Sector> {
-        if bytes % SECTOR_SIZE == 0 {
+        if bytes.is_multiple_of(SECTOR_SIZE) {
             Some(Sector(bytes / SECTOR_SIZE))
         } else {
             None

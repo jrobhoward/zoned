@@ -1,3 +1,14 @@
+//! Zoned block device handle and builder.
+//!
+//! The primary type is [`ZonedDevice`], which wraps a file descriptor to a
+//! zoned block device and exposes zone reporting, zone management (open/close/
+//! finish/reset), and data I/O operations.
+//!
+//! Use [`ZonedDevice::builder`] for composable validation and open-mode
+//! configuration, or the convenience constructors [`ZonedDevice::open`],
+//! [`open_writable`](ZonedDevice::open_writable), and
+//! [`open_direct`](ZonedDevice::open_direct) for quick access.
+
 mod builder;
 mod iter;
 
@@ -134,6 +145,22 @@ impl ZonedDevice {
     ///
     /// Iterates over all zones in batches, applying the filter during
     /// iteration so memory usage is proportional to the result set.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use zoned::{ZonedDevice, ZoneFilter, ZoneType, ZoneCondition};
+    ///
+    /// let dev = ZonedDevice::open("/dev/sdb")?;
+    /// let empty_seq = dev.report_zones_filtered(
+    ///     &ZoneFilter::new()
+    ///         .zone_type(ZoneType::SequentialWriteRequired)
+    ///         .condition(ZoneCondition::Empty),
+    ///     512,
+    /// )?;
+    /// println!("{} empty sequential zones", empty_seq.len());
+    /// # Ok::<(), zoned::ZonedError>(())
+    /// ```
     pub fn report_zones_filtered(&self, filter: &ZoneFilter, batch_size: u32) -> Result<Vec<Zone>> {
         let mut result = Vec::new();
         for zone_result in self.zone_iter(batch_size) {
@@ -250,6 +277,21 @@ impl ZonedDevice {
     ///
     /// Uses `pwritev()` internally — writes all buffers as a single I/O
     /// operation. Requires the device to be opened with `open_writable()`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::io::IoSlice;
+    /// use zoned::{Sector, ZonedDevice};
+    ///
+    /// let dev = ZonedDevice::open_writable("/dev/sdb")?;
+    /// let header = [0xAAu8; 512];
+    /// let payload = [0xBBu8; 4096];
+    /// let bufs = [IoSlice::new(&header), IoSlice::new(&payload)];
+    /// let written = dev.writev_at(Sector(0), &bufs)?;
+    /// assert_eq!(written, 512 + 4096);
+    /// # Ok::<(), zoned::ZonedError>(())
+    /// ```
     pub fn writev_at(&self, sector_offset: Sector, bufs: &[std::io::IoSlice<'_>]) -> Result<usize> {
         let byte_offset = sector_offset
             .0
@@ -265,6 +307,20 @@ impl ZonedDevice {
     ///
     /// Uses `preadv()` internally — reads into all buffers as a single I/O
     /// operation. Works with both read-only and writable device handles.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::io::IoSliceMut;
+    /// use zoned::{Sector, ZonedDevice};
+    ///
+    /// let dev = ZonedDevice::open("/dev/sdb")?;
+    /// let mut header = [0u8; 512];
+    /// let mut payload = [0u8; 4096];
+    /// let mut bufs = [IoSliceMut::new(&mut header), IoSliceMut::new(&mut payload)];
+    /// let n = dev.readv_at(Sector(0), &mut bufs)?;
+    /// # Ok::<(), zoned::ZonedError>(())
+    /// ```
     pub fn readv_at(
         &self,
         sector_offset: Sector,
