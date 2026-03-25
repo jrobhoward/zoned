@@ -1,4 +1,5 @@
 use std::fs::{File, OpenOptions};
+use std::io::{IoSlice, IoSliceMut};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -250,6 +251,53 @@ impl PlatformDevice {
                 path: self.path.clone(),
                 source: e,
             })
+    }
+
+    pub(crate) fn writev_at(&self, bufs: &[IoSlice<'_>], byte_offset: u64) -> Result<usize> {
+        if !self.writable {
+            return Err(ZonedError::ReadOnly {
+                path: self.path.clone(),
+            });
+        }
+        let fd = self.file.as_raw_fd();
+        // SAFETY: pwritev is a POSIX function. The fd is valid (from an open File),
+        // the iovec array and offset are valid. Returns bytes written or -1 on error.
+        let ret = unsafe {
+            libc::pwritev(
+                fd,
+                bufs.as_ptr() as *const libc::iovec,
+                bufs.len() as libc::c_int,
+                byte_offset as libc::off_t,
+            )
+        };
+        if ret < 0 {
+            return Err(ZonedError::Io {
+                path: self.path.clone(),
+                source: std::io::Error::last_os_error(),
+            });
+        }
+        Ok(ret as usize)
+    }
+
+    pub(crate) fn readv_at(&self, bufs: &mut [IoSliceMut<'_>], byte_offset: u64) -> Result<usize> {
+        let fd = self.file.as_raw_fd();
+        // SAFETY: preadv is a POSIX function. The fd is valid, the iovec array
+        // and offset are valid. Returns bytes read or -1 on error.
+        let ret = unsafe {
+            libc::preadv(
+                fd,
+                bufs.as_mut_ptr() as *mut libc::iovec,
+                bufs.len() as libc::c_int,
+                byte_offset as libc::off_t,
+            )
+        };
+        if ret < 0 {
+            return Err(ZonedError::Io {
+                path: self.path.clone(),
+                source: std::io::Error::last_os_error(),
+            });
+        }
+        Ok(ret as usize)
     }
 
     pub(crate) fn device_info(&self) -> Result<DeviceInfo> {

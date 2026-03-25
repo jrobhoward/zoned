@@ -189,6 +189,22 @@ pub struct DeviceProperties {
     pub max_open_zones: u32,
     /// Maximum active zones (0 = no limit).
     pub max_active_zones: u32,
+    /// Logical block size in bytes (0 if unavailable).
+    pub logical_block_size: u32,
+    /// Physical block size in bytes (0 if unavailable).
+    pub physical_block_size: u32,
+    /// Maximum hardware I/O size in KiB (0 if unavailable).
+    pub max_hw_sectors_kb: u32,
+    /// Maximum software I/O size in KiB (0 if unavailable).
+    pub max_sectors_kb: u32,
+    /// Total device capacity in 512-byte sectors.
+    pub capacity_sectors: Sector,
+    /// Active I/O scheduler (e.g. `"mq-deadline"`), if available.
+    pub scheduler: Option<String>,
+    /// Device vendor string from sysfs, if available.
+    pub vendor: Option<String>,
+    /// Device model name string from sysfs, if available.
+    pub model_name: Option<String>,
 }
 
 /// All sector values in this crate use 512-byte sectors, regardless of the
@@ -230,6 +246,10 @@ impl std::fmt::Display for DeviceModel {
         }
     }
 }
+
+mod filter;
+
+pub use filter::ZoneFilter;
 
 #[cfg(test)]
 mod types_tests;

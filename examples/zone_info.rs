@@ -17,8 +17,6 @@
 //! ```
 
 use std::collections::HashMap;
-use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
@@ -28,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use zoned::{
-    DeviceModel, Sector, ZoneAllocator, ZoneCondition, ZoneHandle, ZoneType, ZonedDevice, sysfs,
+    Sector, ZoneAllocator, ZoneCondition, ZoneHandle, ZoneType, ZonedDevice, sysfs, validate,
 };
 
 #[derive(Parser)]
@@ -143,18 +141,10 @@ fn run_info(
     println!("Device: {}", path.display());
     println!();
 
-    validate_block_device(path)?;
-    check_not_mounted(path)?;
-    check_no_partitions(path)?;
-
-    let model = sysfs::device_model(path)?;
-    if model == DeviceModel::None {
-        return Err(format!(
-            "{} is not a zoned device (sysfs reports 'none')",
-            path.display()
-        )
-        .into());
-    }
+    validate::is_block_device(path)?;
+    validate::is_not_mounted(path)?;
+    validate::has_no_partitions(path)?;
+    validate::is_zoned_device(path)?;
 
     let props = sysfs::device_properties(path)?;
     println!("=== Device Properties (sysfs) ===");
@@ -300,16 +290,10 @@ fn run_reset_all(path: &Path, skip_confirm: bool) -> Result<(), Box<dyn std::err
     println!("Device: {}", path.display());
     println!();
 
-    validate_block_device(path)?;
-    check_not_mounted(path)?;
-    check_no_partitions(path)?;
-
-    let model = sysfs::device_model(path)?;
-    if model == DeviceModel::None {
-        return Err(format!("{} is not a zoned device", path.display()).into());
-    }
-
-    let dev = ZonedDevice::open_writable(path)?;
+    let dev = ZonedDevice::builder(path)
+        .writable()
+        .validate_all()
+        .open()?;
     let info = dev.device_info()?;
     let zones = dev.report_all_zones(512)?;
 
@@ -387,14 +371,10 @@ fn run_bench(
     println!("Device: {}", path.display());
     println!();
 
-    validate_block_device(path)?;
-    check_not_mounted(path)?;
-    check_no_partitions(path)?;
-
-    let model = sysfs::device_model(path)?;
-    if model == DeviceModel::None {
-        return Err(format!("{} is not a zoned device", path.display()).into());
-    }
+    validate::is_block_device(path)?;
+    validate::is_not_mounted(path)?;
+    validate::has_no_partitions(path)?;
+    validate::is_zoned_device(path)?;
 
     let props = sysfs::device_properties(path)?;
     let total_zones_needed = threads * zones_per_thread;
@@ -690,108 +670,6 @@ fn alloc_aligned_buf(size: usize, fill: u8) -> Vec<u8> {
     // properly aligned, and all `size` bytes are initialized. The Vec
     // takes ownership and will deallocate via the global allocator.
     unsafe { Vec::from_raw_parts(ptr, size, size) }
-}
-
-// ============================================================
-// Validation helpers
-// ============================================================
-
-fn validate_block_device(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let metadata = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
-
-    let file_type = metadata.mode() & 0o170000;
-    if file_type != 0o060000 {
-        return Err(format!(
-            "{} is not a block device (mode: {:#o})",
-            path.display(),
-            metadata.mode()
-        )
-        .into());
-    }
-
-    println!("  [OK] {} is a block device", path.display());
-    Ok(())
-}
-
-fn check_not_mounted(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let dev_stat = fs::metadata(path)?;
-    let dev_rdev = dev_stat.rdev();
-    let dev_major = (dev_rdev >> 8) as u32;
-    let dev_minor = (dev_rdev & 0xFF) as u32;
-
-    let mountinfo = fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
-
-    for line in mountinfo.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 3 {
-            continue;
-        }
-        if let Some((maj_str, min_str)) = fields[2].split_once(':')
-            && let (Ok(maj), Ok(min)) = (maj_str.parse::<u32>(), min_str.parse::<u32>())
-            && maj == dev_major
-            && min == dev_minor
-        {
-            let mount_point = if fields.len() > 4 {
-                fields[4]
-            } else {
-                "unknown"
-            };
-            return Err(format!(
-                "{} is mounted at {} -- refusing to operate on a mounted device",
-                path.display(),
-                mount_point
-            )
-            .into());
-        }
-    }
-
-    println!("  [OK] {} is not mounted", path.display());
-    Ok(())
-}
-
-fn check_no_partitions(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let dev_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| format!("cannot determine device name from {}", path.display()))?;
-
-    let sysfs_dir = format!("/sys/block/{dev_name}");
-    if !Path::new(&sysfs_dir).exists() {
-        return Err(format!(
-            "{} does not appear in /sys/block/ -- is it a partition? \
-             Use the whole disk device (e.g. /dev/sda, not /dev/sda1)",
-            path.display()
-        )
-        .into());
-    }
-
-    let entries = fs::read_dir(&sysfs_dir)?;
-    let mut partitions = Vec::new();
-
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with(dev_name) {
-            let partition_file = entry.path().join("partition");
-            if partition_file.exists() {
-                partitions.push(name_str.to_string());
-            }
-        }
-    }
-
-    if !partitions.is_empty() {
-        partitions.sort();
-        return Err(format!(
-            "{} has partitions: {} -- zoned devices should not be partitioned",
-            path.display(),
-            partitions.join(", ")
-        )
-        .into());
-    }
-
-    println!("  [OK] {} has no partitions", path.display());
-    Ok(())
 }
 
 // ============================================================

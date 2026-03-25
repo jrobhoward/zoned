@@ -110,6 +110,26 @@ impl ZoneHandle {
         Ok(written)
     }
 
+    /// Write scattered buffers sequentially at the current write pointer.
+    ///
+    /// Uses `pwritev()` internally for a single gather-write I/O operation.
+    /// The write pointer advances by the total number of bytes written.
+    ///
+    /// Returns `ZoneFull` if the write pointer has reached the zone's capacity.
+    pub fn writev_sequential(&mut self, bufs: &[std::io::IoSlice<'_>]) -> Result<usize> {
+        let capacity_end = self.start + self.capacity;
+        if self.write_pointer >= capacity_end {
+            return Err(ZonedError::ZoneFull {
+                zone_index: self.zone_index,
+            });
+        }
+
+        let written = self.device.writev_at(self.write_pointer, bufs)?;
+        let sectors_written = Sector(written as u64 / SECTOR_SIZE);
+        self.write_pointer += sectors_written;
+        Ok(written)
+    }
+
     /// Reset this zone's write pointer to the start.
     ///
     /// Data in the zone becomes inaccessible.

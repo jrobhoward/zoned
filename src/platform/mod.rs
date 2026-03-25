@@ -91,6 +91,22 @@ impl PlatformDevice {
         Err(crate::error::ZonedError::UnsupportedPlatform)
     }
 
+    pub(crate) fn writev_at(
+        &self,
+        _bufs: &[std::io::IoSlice<'_>],
+        _byte_offset: u64,
+    ) -> crate::error::Result<usize> {
+        Err(crate::error::ZonedError::UnsupportedPlatform)
+    }
+
+    pub(crate) fn readv_at(
+        &self,
+        _bufs: &mut [std::io::IoSliceMut<'_>],
+        _byte_offset: u64,
+    ) -> crate::error::Result<usize> {
+        Err(crate::error::ZonedError::UnsupportedPlatform)
+    }
+
     pub(crate) fn path(&self) -> &std::path::Path {
         std::path::Path::new("")
     }

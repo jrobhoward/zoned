@@ -52,6 +52,18 @@ pub enum ZonedError {
     #[error("zone {zone_index} is full")]
     ZoneFull { zone_index: ZoneIndex },
 
+    #[error("not a block device: {path} (mode {mode:#o})")]
+    NotABlockDevice { path: PathBuf, mode: u32 },
+
+    #[error("{path} is mounted at {mount_point}")]
+    DeviceMounted { path: PathBuf, mount_point: String },
+
+    #[error("{path} has partitions: {}", partitions.join(", "))]
+    DeviceHasPartitions {
+        path: PathBuf,
+        partitions: Vec<String>,
+    },
+
     #[error("platform not supported for zoned block device operations")]
     UnsupportedPlatform,
 }

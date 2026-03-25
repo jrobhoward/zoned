@@ -114,6 +114,14 @@ fn device_properties____fields____are_accessible() {
         zone_append_max_bytes: 0,
         max_open_zones: 128,
         max_active_zones: 0,
+        logical_block_size: 512,
+        physical_block_size: 4096,
+        max_hw_sectors_kb: 1024,
+        max_sectors_kb: 512,
+        capacity_sectors: Sector(19532873728),
+        scheduler: Some("mq-deadline".to_string()),
+        vendor: Some("ATA".to_string()),
+        model_name: Some("HGST HMH7210A0AL".to_string()),
     };
 
     assert_eq!(props.model, DeviceModel::HostManaged);
@@ -122,6 +130,12 @@ fn device_properties____fields____are_accessible() {
     assert_eq!(props.zone_append_max_bytes, 0);
     assert_eq!(props.max_open_zones, 128);
     assert_eq!(props.max_active_zones, 0);
+    assert_eq!(props.logical_block_size, 512);
+    assert_eq!(props.physical_block_size, 4096);
+    assert_eq!(props.capacity_sectors, Sector(19532873728));
+    assert_eq!(props.scheduler.as_deref(), Some("mq-deadline"));
+    assert_eq!(props.vendor.as_deref(), Some("ATA"));
+    assert_eq!(props.model_name.as_deref(), Some("HGST HMH7210A0AL"));
 }
 
 #[test]

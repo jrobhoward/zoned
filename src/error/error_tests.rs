@@ -116,6 +116,41 @@ fn zoned_error____zone_full____display_message() {
 }
 
 #[test]
+fn zoned_error____not_a_block_device____display_message() {
+    let err = ZonedError::NotABlockDevice {
+        path: PathBuf::from("/tmp/foo"),
+        mode: 0o100644,
+    };
+    let msg = format!("{err}");
+    assert!(msg.contains("/tmp/foo"), "Message was: {msg}");
+    assert!(msg.contains("not a block device"), "Message was: {msg}");
+    assert!(msg.contains("0o100644"), "Message was: {msg}");
+}
+
+#[test]
+fn zoned_error____device_mounted____display_message() {
+    let err = ZonedError::DeviceMounted {
+        path: PathBuf::from("/dev/sda"),
+        mount_point: "/mnt/data".to_string(),
+    };
+    let msg = format!("{err}");
+    assert!(msg.contains("/dev/sda"), "Message was: {msg}");
+    assert!(msg.contains("/mnt/data"), "Message was: {msg}");
+}
+
+#[test]
+fn zoned_error____device_has_partitions____display_message() {
+    let err = ZonedError::DeviceHasPartitions {
+        path: PathBuf::from("/dev/sda"),
+        partitions: vec!["sda1".to_string(), "sda2".to_string()],
+    };
+    let msg = format!("{err}");
+    assert!(msg.contains("/dev/sda"), "Message was: {msg}");
+    assert!(msg.contains("sda1"), "Message was: {msg}");
+    assert!(msg.contains("sda2"), "Message was: {msg}");
+}
+
+#[test]
 fn zoned_error____unsupported_platform____display_message() {
     let err = ZonedError::UnsupportedPlatform;
     let msg = format!("{err}");

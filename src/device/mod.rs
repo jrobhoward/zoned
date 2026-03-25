@@ -1,8 +1,14 @@
+mod builder;
+mod iter;
+
+pub use builder::DeviceBuilder;
+pub use iter::ZoneIterator;
+
 use std::path::Path;
 
 use crate::error::{Result, ZonedError};
 use crate::platform::PlatformDevice;
-use crate::types::{DeviceInfo, Sector, Zone};
+use crate::types::{DeviceInfo, Sector, Zone, ZoneFilter};
 
 /// Handle to an open zoned block device.
 ///
@@ -29,6 +35,23 @@ pub struct ZonedDevice {
 }
 
 impl ZonedDevice {
+    /// Create a builder for opening a device with optional validation.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use zoned::ZonedDevice;
+    ///
+    /// let dev = ZonedDevice::builder("/dev/sda")
+    ///     .writable()
+    ///     .validate_all()
+    ///     .open()?;
+    /// # Ok::<(), zoned::ZonedError>(())
+    /// ```
+    pub fn builder(path: impl AsRef<Path>) -> DeviceBuilder {
+        DeviceBuilder::new(path)
+    }
+
     /// Open a zoned block device by path.
     ///
     /// The path should be a block device node (e.g. `/dev/sdb` on Linux).
@@ -83,6 +106,43 @@ impl ZonedDevice {
         }
 
         Ok(all_zones)
+    }
+
+    /// Create a lazy iterator over all zones on the device.
+    ///
+    /// Fetches zones in batches of `batch_size` per ioctl call. Yields
+    /// `Result<Zone>` items — use standard iterator adapters for filtering.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use zoned::{ZonedDevice, ZoneType, ZoneCondition};
+    ///
+    /// let dev = ZonedDevice::open("/dev/sdb")?;
+    /// for zone in dev.zone_iter(512).filter_map(|r| r.ok()) {
+    ///     if zone.zone_type == ZoneType::SequentialWriteRequired {
+    ///         println!("seq zone at {}: {}", zone.start, zone.condition);
+    ///     }
+    /// }
+    /// # Ok::<(), zoned::ZonedError>(())
+    /// ```
+    pub fn zone_iter(&self, batch_size: u32) -> ZoneIterator<'_> {
+        ZoneIterator::new(self, batch_size)
+    }
+
+    /// Report all zones matching a filter.
+    ///
+    /// Iterates over all zones in batches, applying the filter during
+    /// iteration so memory usage is proportional to the result set.
+    pub fn report_zones_filtered(&self, filter: &ZoneFilter, batch_size: u32) -> Result<Vec<Zone>> {
+        let mut result = Vec::new();
+        for zone_result in self.zone_iter(batch_size) {
+            let zone = zone_result?;
+            if filter.matches(&zone) {
+                result.push(zone);
+            }
+        }
+        Ok(result)
     }
 
     /// Reset write pointers for zones in the given sector range.
@@ -184,6 +244,40 @@ impl ZonedDevice {
                 nr_sectors: Sector::ZERO,
             })?;
         self.inner.read_at(buf, byte_offset)
+    }
+
+    /// Write scattered buffers at a sector offset (vectored/gather write).
+    ///
+    /// Uses `pwritev()` internally — writes all buffers as a single I/O
+    /// operation. Requires the device to be opened with `open_writable()`.
+    pub fn writev_at(&self, sector_offset: Sector, bufs: &[std::io::IoSlice<'_>]) -> Result<usize> {
+        let byte_offset = sector_offset
+            .0
+            .checked_mul(crate::types::SECTOR_SIZE)
+            .ok_or(ZonedError::InvalidRange {
+                sector: sector_offset,
+                nr_sectors: Sector::ZERO,
+            })?;
+        self.inner.writev_at(bufs, byte_offset)
+    }
+
+    /// Read into scattered buffers at a sector offset (vectored/scatter read).
+    ///
+    /// Uses `preadv()` internally — reads into all buffers as a single I/O
+    /// operation. Works with both read-only and writable device handles.
+    pub fn readv_at(
+        &self,
+        sector_offset: Sector,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+    ) -> Result<usize> {
+        let byte_offset = sector_offset
+            .0
+            .checked_mul(crate::types::SECTOR_SIZE)
+            .ok_or(ZonedError::InvalidRange {
+                sector: sector_offset,
+                nr_sectors: Sector::ZERO,
+            })?;
+        self.inner.readv_at(bufs, byte_offset)
     }
 
     /// Flush all pending writes to the device.
