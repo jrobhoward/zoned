@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::types::{Sector, ZoneIndex};
+
 /// Errors that can occur when interacting with zoned block devices.
 #[derive(Debug, thiserror::Error)]
 pub enum ZonedError {
@@ -36,19 +38,19 @@ pub enum ZonedError {
     },
 
     #[error("invalid zone range: sector {sector}, count {nr_sectors}")]
-    InvalidRange { sector: u64, nr_sectors: u64 },
+    InvalidRange { sector: Sector, nr_sectors: Sector },
 
     #[error("device opened read-only, write access required: {path}")]
     ReadOnly { path: PathBuf },
 
     #[error("zone {zone_index} is already allocated")]
-    ZoneAlreadyAllocated { zone_index: u32 },
+    ZoneAlreadyAllocated { zone_index: ZoneIndex },
 
     #[error("zone {zone_index} is not allocated")]
-    ZoneNotAllocated { zone_index: u32 },
+    ZoneNotAllocated { zone_index: ZoneIndex },
 
     #[error("zone {zone_index} is full")]
-    ZoneFull { zone_index: u32 },
+    ZoneFull { zone_index: ZoneIndex },
 
     #[error("platform not supported for zoned block device operations")]
     UnsupportedPlatform,

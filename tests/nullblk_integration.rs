@@ -20,7 +20,9 @@ use std::process::Command;
 use std::sync::Arc;
 use std::thread;
 
-use zoned::{DeviceModel, ZoneAllocator, ZoneCondition, ZoneHandle, ZoneType, ZonedDevice};
+use zoned::{
+    DeviceModel, Sector, ZoneAllocator, ZoneCondition, ZoneHandle, ZoneIndex, ZoneType, ZonedDevice,
+};
 
 // --- Test device configuration ---
 
@@ -32,7 +34,7 @@ const ZONE_MAX_ACTIVE: u32 = 8;
 const BLOCK_SIZE: u32 = 4096;
 
 // 64 MB in 512-byte sectors
-const ZONE_SIZE_SECTORS: u32 = ZONE_SIZE_MB * 1024 * 1024 / 512;
+const ZONE_SIZE_SECTORS: u64 = ZONE_SIZE_MB as u64 * 1024 * 1024 / 512;
 
 // Expected total zones: 1024 MB / 64 MB = 16
 const EXPECTED_NR_ZONES: u32 = DEVICE_SIZE_MB / ZONE_SIZE_MB;
@@ -173,7 +175,8 @@ fn device_info____nullblk____returns_correct_zone_size() {
 
     let info = dev.device_info().expect("device_info failed");
     assert_eq!(
-        info.zone_size, ZONE_SIZE_SECTORS,
+        info.zone_size,
+        Sector(ZONE_SIZE_SECTORS),
         "zone_size: expected {ZONE_SIZE_SECTORS}, got {}",
         info.zone_size
     );
@@ -211,7 +214,7 @@ fn sysfs____nullblk____properties_match_config() {
     let props = zoned::sysfs::device_properties(nullblk.path()).expect("device_properties failed");
 
     assert_eq!(props.model, DeviceModel::HostManaged);
-    assert_eq!(props.chunk_sectors, ZONE_SIZE_SECTORS);
+    assert_eq!(props.chunk_sectors, Sector(ZONE_SIZE_SECTORS));
     assert_eq!(props.nr_zones, EXPECTED_NR_ZONES);
     assert_eq!(props.max_open_zones, ZONE_MAX_OPEN);
     assert_eq!(props.max_active_zones, ZONE_MAX_ACTIVE);
@@ -227,7 +230,7 @@ fn report_zones____nullblk____first_zones_are_conventional() {
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
     let zones = dev
-        .report_zones(0, ZONE_NR_CONV)
+        .report_zones(Sector::ZERO, ZONE_NR_CONV)
         .expect("report_zones failed");
     assert_eq!(zones.len(), ZONE_NR_CONV as usize);
 
@@ -246,10 +249,10 @@ fn report_zones____nullblk____first_zones_are_conventional() {
         );
         assert_eq!(
             zone.start,
-            i as u64 * ZONE_SIZE_SECTORS as u64,
+            Sector(i as u64 * ZONE_SIZE_SECTORS),
             "zone {i} start sector mismatch"
         );
-        assert_eq!(zone.len, ZONE_SIZE_SECTORS as u64);
+        assert_eq!(zone.len, Sector(ZONE_SIZE_SECTORS));
     }
 }
 
@@ -259,7 +262,7 @@ fn report_zones____nullblk____sequential_zones_start_empty() {
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
     // Skip past conventional zones, read some sequential ones
-    let seq_start_sector = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
+    let seq_start_sector = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
     let zones = dev
         .report_zones(seq_start_sector, 4)
         .expect("report_zones failed");
@@ -291,12 +294,12 @@ fn report_zones____nullblk____zone_start_sectors_are_contiguous() {
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
     let zones = dev
-        .report_zones(0, EXPECTED_NR_ZONES)
+        .report_zones(Sector::ZERO, EXPECTED_NR_ZONES)
         .expect("report_zones failed");
     assert_eq!(zones.len(), EXPECTED_NR_ZONES as usize);
 
     for (i, zone) in zones.iter().enumerate() {
-        let expected_start = i as u64 * ZONE_SIZE_SECTORS as u64;
+        let expected_start = Sector(i as u64 * ZONE_SIZE_SECTORS);
         assert_eq!(
             zone.start, expected_start,
             "zone {i} start: expected {expected_start}, got {}",
@@ -344,8 +347,8 @@ fn open_zones____nullblk____zone_becomes_explicitly_open() {
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
     // Target the first sequential zone
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     dev.open_zones(seq_start, zone_len)
         .expect("open_zones failed");
@@ -365,8 +368,8 @@ fn close_zones____nullblk____open_zone_becomes_closed() {
     let nullblk = require_nullblk!("nullb_close");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     // Open then close
     dev.open_zones(seq_start, zone_len)
@@ -389,8 +392,8 @@ fn finish_zones____nullblk____zone_becomes_full() {
     let nullblk = require_nullblk!("nullb_finish");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     dev.finish_zones(seq_start, zone_len)
         .expect("finish_zones failed");
@@ -410,8 +413,8 @@ fn reset_zones____nullblk____full_zone_becomes_empty() {
     let nullblk = require_nullblk!("nullb_reset");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     // Finish then reset
     dev.finish_zones(seq_start, zone_len)
@@ -438,8 +441,8 @@ fn finish_zones____nullblk____write_pointer_advances_to_end() {
     let nullblk = require_nullblk!("nullb_finish_wp");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     dev.finish_zones(seq_start, zone_len)
         .expect("finish_zones failed");
@@ -461,8 +464,8 @@ fn zone_lifecycle____nullblk____full_state_machine() {
     let nullblk = require_nullblk!("nullb_lifecycle");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     // Start: Empty
     let zones = dev.report_zones(seq_start, 1).expect("report failed");
@@ -508,17 +511,17 @@ fn open_zones____nullblk____multiple_zones_simultaneously() {
     let nullblk = require_nullblk!("nullb_multi_open");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     // Open 3 sequential zones individually
     for i in 0..3u64 {
-        let sector = (ZONE_NR_CONV as u64 + i) * zone_len;
+        let sector = Sector((ZONE_NR_CONV as u64 + i) * ZONE_SIZE_SECTORS);
         dev.open_zones(sector, zone_len)
             .unwrap_or_else(|e| panic!("open_zones failed for zone {i}: {e}"));
     }
 
     // Verify all three are open
-    let seq_start = ZONE_NR_CONV as u64 * zone_len;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
     let zones = dev.report_zones(seq_start, 3).expect("report_zones failed");
     assert_eq!(zones.len(), 3);
 
@@ -536,12 +539,12 @@ fn reset_zones____nullblk____reset_multiple_finished_zones() {
     let nullblk = require_nullblk!("nullb_multi_reset");
     let dev = ZonedDevice::open(nullblk.path()).expect("failed to open device");
 
-    let zone_len = ZONE_SIZE_SECTORS as u64;
-    let seq_start = ZONE_NR_CONV as u64 * zone_len;
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
 
     // Finish 3 zones
     for i in 0..3u64 {
-        let sector = seq_start + i * zone_len;
+        let sector = seq_start + Sector(i * ZONE_SIZE_SECTORS);
         dev.finish_zones(sector, zone_len).expect("finish failed");
     }
 
@@ -585,8 +588,8 @@ fn open_writable____nullblk____zone_management_works() {
     let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
     assert!(dev.is_writable());
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     dev.open_zones(seq_start, zone_len).expect("open failed");
     dev.close_zones(seq_start, zone_len).expect("close failed");
@@ -598,8 +601,8 @@ fn write_at____nullblk____sequential_write_advances_write_pointer() {
     let nullblk = require_nullblk!("nullb_write_wp");
     let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     // Write 4096 bytes (8 sectors of 512 bytes) at the write pointer
     let data = vec![0xAAu8; 4096];
@@ -610,7 +613,7 @@ fn write_at____nullblk____sequential_write_advances_write_pointer() {
     let zones = dev.report_zones(seq_start, 1).expect("report failed");
     assert_eq!(
         zones[0].write_pointer,
-        seq_start + 8, // 4096 / 512 = 8 sectors
+        seq_start + Sector(8), // 4096 / 512 = 8 sectors
         "write pointer should have advanced by 8 sectors"
     );
 
@@ -623,8 +626,8 @@ fn read_at____nullblk____reads_back_written_data() {
     let nullblk = require_nullblk!("nullb_read_back");
     let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
 
-    let seq_start = ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS as u64;
-    let zone_len = ZONE_SIZE_SECTORS as u64;
+    let seq_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
+    let zone_len = Sector(ZONE_SIZE_SECTORS);
 
     // Write a known pattern
     let mut data = vec![0u8; 4096];
@@ -649,7 +652,7 @@ fn write_at____nullblk____conventional_zone_random_write() {
     let dev = ZonedDevice::open_writable(nullblk.path()).expect("open_writable failed");
 
     // Write to the middle of the first conventional zone
-    let offset = 1024; // sector 1024 (within first conv zone)
+    let offset = Sector(1024); // sector 1024 (within first conv zone)
     let data = vec![0xBBu8; 512];
     let written = dev.write_at(offset, &data).expect("write_at failed");
     assert_eq!(written, 512);
@@ -665,7 +668,7 @@ fn write_at____nullblk____read_only_open_returns_error() {
     let nullblk = require_nullblk!("nullb_ro_write");
     let dev = ZonedDevice::open(nullblk.path()).expect("open failed");
 
-    let result = dev.write_at(0, &[0u8; 512]);
+    let result = dev.write_at(Sector::ZERO, &[0u8; 512]);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
@@ -683,10 +686,10 @@ fn zone_handle____nullblk____write_sequential_advances_write_pointer() {
     let nullblk = require_nullblk!("nullb_zh_write");
     let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
 
-    let first_seq_idx = ZONE_NR_CONV;
+    let first_seq_idx = ZoneIndex(ZONE_NR_CONV);
     let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
 
-    let expected_start = first_seq_idx as u64 * ZONE_SIZE_SECTORS as u64;
+    let expected_start = Sector(ZONE_NR_CONV as u64 * ZONE_SIZE_SECTORS);
     assert_eq!(handle.start(), expected_start);
     assert_eq!(handle.write_pointer(), expected_start);
 
@@ -696,11 +699,11 @@ fn zone_handle____nullblk____write_sequential_advances_write_pointer() {
         .write_sequential(&data)
         .expect("write_sequential failed");
     assert_eq!(written, 4096);
-    assert_eq!(handle.write_pointer(), expected_start + 8);
+    assert_eq!(handle.write_pointer(), expected_start + Sector(8));
 
     // Verify against the device
     let zone = handle.report().expect("report failed");
-    assert_eq!(zone.write_pointer, expected_start + 8);
+    assert_eq!(zone.write_pointer, expected_start + Sector(8));
 
     // Clean up
     handle.reset().expect("reset failed");
@@ -711,7 +714,7 @@ fn zone_handle____nullblk____reset_resets_write_pointer() {
     let nullblk = require_nullblk!("nullb_zh_reset");
     let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
 
-    let first_seq_idx = ZONE_NR_CONV;
+    let first_seq_idx = ZoneIndex(ZONE_NR_CONV);
     let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
     let start = handle.start();
 
@@ -732,7 +735,7 @@ fn zone_handle____nullblk____finish_sets_full() {
     let nullblk = require_nullblk!("nullb_zh_finish");
     let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
 
-    let first_seq_idx = ZONE_NR_CONV;
+    let first_seq_idx = ZoneIndex(ZONE_NR_CONV);
     let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
 
     handle.finish().expect("finish failed");
@@ -750,7 +753,7 @@ fn zone_handle____nullblk____write_then_read_round_trip() {
     let nullblk = require_nullblk!("nullb_zh_rtrip");
     let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
 
-    let first_seq_idx = ZONE_NR_CONV;
+    let first_seq_idx = ZoneIndex(ZONE_NR_CONV);
     let mut handle = ZoneHandle::new(dev.clone(), first_seq_idx).expect("ZoneHandle::new failed");
 
     let mut data = vec![0u8; 4096];
@@ -780,7 +783,7 @@ fn zone_allocator____nullblk____allocate_returns_empty_sequential_zone() {
 
     let handle = allocator.allocate().expect("allocate failed");
     assert!(
-        handle.zone_index() >= ZONE_NR_CONV,
+        handle.zone_index() >= ZoneIndex(ZONE_NR_CONV),
         "should skip conventional zones"
     );
     assert!(!handle.is_empty());
@@ -792,7 +795,7 @@ fn zone_allocator____nullblk____allocate_zone_specific_index() {
     let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
     let allocator = ZoneAllocator::new(dev);
 
-    let zone_idx = ZONE_NR_CONV + 3;
+    let zone_idx = ZoneIndex(ZONE_NR_CONV + 3);
     let handle = allocator
         .allocate_zone(zone_idx)
         .expect("allocate_zone failed");
@@ -805,7 +808,7 @@ fn zone_allocator____nullblk____double_allocate_returns_error() {
     let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
     let allocator = ZoneAllocator::new(dev);
 
-    let zone_idx = ZONE_NR_CONV;
+    let zone_idx = ZoneIndex(ZONE_NR_CONV);
     let _handle = allocator
         .allocate_zone(zone_idx)
         .expect("first allocate failed");
@@ -825,7 +828,7 @@ fn zone_allocator____nullblk____drop_handle_releases_zone() {
     let dev = Arc::new(ZonedDevice::open_writable(nullblk.path()).expect("open failed"));
     let allocator = ZoneAllocator::new(dev);
 
-    let zone_idx = ZONE_NR_CONV;
+    let zone_idx = ZoneIndex(ZONE_NR_CONV);
     {
         let _handle = allocator.allocate_zone(zone_idx).expect("allocate failed");
         assert_eq!(allocator.allocated_zones(), vec![zone_idx]);
@@ -846,19 +849,23 @@ fn zone_allocator____nullblk____allocated_zones_tracking() {
     let allocator = ZoneAllocator::new(dev);
 
     let _h1 = allocator
-        .allocate_zone(ZONE_NR_CONV)
+        .allocate_zone(ZoneIndex(ZONE_NR_CONV))
         .expect("alloc 1 failed");
     let _h2 = allocator
-        .allocate_zone(ZONE_NR_CONV + 1)
+        .allocate_zone(ZoneIndex(ZONE_NR_CONV + 1))
         .expect("alloc 2 failed");
     let _h3 = allocator
-        .allocate_zone(ZONE_NR_CONV + 3)
+        .allocate_zone(ZoneIndex(ZONE_NR_CONV + 3))
         .expect("alloc 3 failed");
 
     let allocated = allocator.allocated_zones();
     assert_eq!(
         allocated,
-        vec![ZONE_NR_CONV, ZONE_NR_CONV + 1, ZONE_NR_CONV + 3]
+        vec![
+            ZoneIndex(ZONE_NR_CONV),
+            ZoneIndex(ZONE_NR_CONV + 1),
+            ZoneIndex(ZONE_NR_CONV + 3)
+        ]
     );
 }
 

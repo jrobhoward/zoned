@@ -3,14 +3,14 @@ use std::sync::{Arc, Mutex};
 
 use crate::ZonedDevice;
 use crate::error::{Result, ZonedError};
-use crate::types::ZoneType;
+use crate::types::{Sector, ZoneIndex, ZoneType};
 use crate::zone_handle::ZoneHandle;
 
 /// Shared internal state for tracking allocated zones.
 ///
 /// Used by both `ZoneAllocator` and `ZoneHandle` (via `Drop`).
 pub(crate) struct AllocatorInner {
-    allocated: Mutex<HashSet<u32>>,
+    allocated: Mutex<HashSet<ZoneIndex>>,
 }
 
 impl AllocatorInner {
@@ -24,13 +24,13 @@ impl AllocatorInner {
     ///
     /// Called by `ZoneHandle::drop`. Handles poisoned mutex gracefully
     /// since `Drop` must not panic.
-    pub(crate) fn release(&self, zone_index: u32) {
+    pub(crate) fn release(&self, zone_index: ZoneIndex) {
         if let Ok(mut set) = self.allocated.lock() {
             set.remove(&zone_index);
         }
     }
 
-    fn try_allocate(&self, zone_index: u32) -> Result<()> {
+    fn try_allocate(&self, zone_index: ZoneIndex) -> Result<()> {
         let mut set = self.allocated.lock().unwrap_or_else(|e| e.into_inner());
         if set.contains(&zone_index) {
             return Err(ZonedError::ZoneAlreadyAllocated { zone_index });
@@ -93,7 +93,7 @@ impl ZoneAllocator {
             .unwrap_or_else(|e| e.into_inner());
 
         for (i, zone) in zones.iter().enumerate() {
-            let idx = i as u32;
+            let idx = ZoneIndex(i as u32);
             if zone.zone_type == ZoneType::SequentialWriteRequired
                 && zone.condition == crate::types::ZoneCondition::Empty
                 && !allocated.contains(&idx)
@@ -105,15 +105,15 @@ impl ZoneAllocator {
 
         // No suitable zone found — report as invalid range (no empty zones available)
         Err(ZonedError::InvalidRange {
-            sector: 0,
-            nr_sectors: 0,
+            sector: Sector::ZERO,
+            nr_sectors: Sector::ZERO,
         })
     }
 
     /// Allocate a specific zone by index.
     ///
     /// Returns `ZoneAlreadyAllocated` if the zone is already checked out.
-    pub fn allocate_zone(&self, zone_index: u32) -> Result<ZoneHandle> {
+    pub fn allocate_zone(&self, zone_index: ZoneIndex) -> Result<ZoneHandle> {
         self.inner.try_allocate(zone_index)?;
 
         match ZoneHandle::new_with_allocator(self.device.clone(), zone_index, self.inner.clone()) {
@@ -130,7 +130,7 @@ impl ZoneAllocator {
     ///
     /// This is not normally needed — `ZoneHandle::drop` does this automatically.
     /// Returns `ZoneNotAllocated` if the zone was not tracked.
-    pub fn release(&self, zone_index: u32) -> Result<()> {
+    pub fn release(&self, zone_index: ZoneIndex) -> Result<()> {
         let mut set = self
             .inner
             .allocated
@@ -144,13 +144,13 @@ impl ZoneAllocator {
     }
 
     /// Returns the list of currently allocated zone indices.
-    pub fn allocated_zones(&self) -> Vec<u32> {
+    pub fn allocated_zones(&self) -> Vec<ZoneIndex> {
         let set = self
             .inner
             .allocated
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let mut v: Vec<u32> = set.iter().copied().collect();
+        let mut v: Vec<ZoneIndex> = set.iter().copied().collect();
         v.sort_unstable();
         v
     }

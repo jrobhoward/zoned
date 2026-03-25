@@ -4,6 +4,8 @@
 
 use std::path::PathBuf;
 
+use crate::types::{Sector, ZoneIndex};
+
 use super::*;
 
 #[test]
@@ -40,8 +42,8 @@ fn zoned_error____io____display_message() {
 #[test]
 fn zoned_error____invalid_range____display_message() {
     let err = ZonedError::InvalidRange {
-        sector: 100,
-        nr_sectors: 0,
+        sector: Sector(100),
+        nr_sectors: Sector(0),
     };
     let msg = format!("{err}");
     assert!(msg.contains("100"), "Message was: {msg}");
@@ -85,7 +87,9 @@ fn zoned_error____read_only____display_message() {
 
 #[test]
 fn zoned_error____zone_already_allocated____display_message() {
-    let err = ZonedError::ZoneAlreadyAllocated { zone_index: 5 };
+    let err = ZonedError::ZoneAlreadyAllocated {
+        zone_index: ZoneIndex(5),
+    };
     let msg = format!("{err}");
     assert!(msg.contains("5"), "Message was: {msg}");
     assert!(msg.contains("already allocated"), "Message was: {msg}");
@@ -93,7 +97,9 @@ fn zoned_error____zone_already_allocated____display_message() {
 
 #[test]
 fn zoned_error____zone_not_allocated____display_message() {
-    let err = ZonedError::ZoneNotAllocated { zone_index: 7 };
+    let err = ZonedError::ZoneNotAllocated {
+        zone_index: ZoneIndex(7),
+    };
     let msg = format!("{err}");
     assert!(msg.contains("7"), "Message was: {msg}");
     assert!(msg.contains("not allocated"), "Message was: {msg}");
@@ -101,7 +107,9 @@ fn zoned_error____zone_not_allocated____display_message() {
 
 #[test]
 fn zoned_error____zone_full____display_message() {
-    let err = ZonedError::ZoneFull { zone_index: 3 };
+    let err = ZonedError::ZoneFull {
+        zone_index: ZoneIndex(3),
+    };
     let msg = format!("{err}");
     assert!(msg.contains("3"), "Message was: {msg}");
     assert!(msg.contains("full"), "Message was: {msg}");

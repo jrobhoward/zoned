@@ -1,3 +1,106 @@
+/// A sector offset or count in 512-byte sectors.
+///
+/// All sector values in this crate use 512-byte sectors, regardless of the
+/// device's physical or logical block size. This matches the Linux kernel's
+/// zoned block device interface.
+///
+/// Arithmetic operations that make physical sense are supported:
+/// - `Sector + Sector`, `Sector - Sector` (offset arithmetic)
+/// - `Sector * u64`, `Sector / u64` (scaling)
+/// - `Sector * Sector` is intentionally **not** supported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Sector(pub u64);
+
+impl Sector {
+    /// The zero sector.
+    pub const ZERO: Sector = Sector(0);
+
+    /// Convert to bytes (multiply by 512).
+    pub fn to_bytes(self) -> u64 {
+        self.0 * SECTOR_SIZE
+    }
+
+    /// Convert from a byte count. Returns `None` if not sector-aligned.
+    pub fn from_bytes(bytes: u64) -> Option<Sector> {
+        if bytes % SECTOR_SIZE == 0 {
+            Some(Sector(bytes / SECTOR_SIZE))
+        } else {
+            None
+        }
+    }
+
+    /// Get the raw `u64` value.
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Sector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::ops::Add for Sector {
+    type Output = Sector;
+    fn add(self, rhs: Sector) -> Sector {
+        Sector(self.0 + rhs.0)
+    }
+}
+
+impl std::ops::AddAssign for Sector {
+    fn add_assign(&mut self, rhs: Sector) {
+        self.0 += rhs.0;
+    }
+}
+
+impl std::ops::Sub for Sector {
+    type Output = Sector;
+    fn sub(self, rhs: Sector) -> Sector {
+        Sector(self.0 - rhs.0)
+    }
+}
+
+impl std::ops::SubAssign for Sector {
+    fn sub_assign(&mut self, rhs: Sector) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl std::ops::Mul<u64> for Sector {
+    type Output = Sector;
+    fn mul(self, rhs: u64) -> Sector {
+        Sector(self.0 * rhs)
+    }
+}
+
+impl std::ops::Div<u64> for Sector {
+    type Output = Sector;
+    fn div(self, rhs: u64) -> Sector {
+        Sector(self.0 / rhs)
+    }
+}
+
+/// A zone index on a zoned block device.
+///
+/// Zone indices are identifiers, not quantities — no arithmetic operators
+/// are provided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ZoneIndex(pub u32);
+
+impl ZoneIndex {
+    /// Get the raw `u32` value.
+    pub fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for ZoneIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Type of a zone on a zoned block device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ZoneType {
@@ -33,14 +136,14 @@ pub enum ZoneCondition {
 /// Descriptor for a single zone on the device.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Zone {
-    /// Start sector of the zone (512-byte sectors).
-    pub start: u64,
+    /// Start sector of the zone.
+    pub start: Sector,
     /// Length of the zone in sectors.
-    pub len: u64,
+    pub len: Sector,
     /// Usable capacity in sectors (may be less than len for ZNS devices).
-    pub capacity: u64,
+    pub capacity: Sector,
     /// Current write pointer position in sectors.
-    pub write_pointer: u64,
+    pub write_pointer: Sector,
     /// Zone type.
     pub zone_type: ZoneType,
     /// Zone condition (state).
@@ -55,7 +158,7 @@ pub struct Zone {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceInfo {
     /// Zone size in 512-byte sectors.
-    pub zone_size: u32,
+    pub zone_size: Sector,
     /// Total number of zones on the device.
     pub nr_zones: u32,
 }
@@ -77,7 +180,7 @@ pub struct DeviceProperties {
     /// Device model (none, host-aware, host-managed).
     pub model: DeviceModel,
     /// Zone size in 512-byte sectors.
-    pub chunk_sectors: u32,
+    pub chunk_sectors: Sector,
     /// Total number of zones.
     pub nr_zones: u32,
     /// Maximum bytes for a zone append command (0 if unsupported).
@@ -92,6 +195,41 @@ pub struct DeviceProperties {
 /// device's physical or logical block size. This matches the Linux kernel's
 /// zoned block device interface.
 pub const SECTOR_SIZE: u64 = 512;
+
+impl std::fmt::Display for ZoneType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ZoneType::Conventional => f.write_str("Conventional"),
+            ZoneType::SequentialWriteRequired => f.write_str("Sequential Write Required"),
+            ZoneType::SequentialWritePreferred => f.write_str("Sequential Write Preferred"),
+        }
+    }
+}
+
+impl std::fmt::Display for ZoneCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ZoneCondition::NotWritePointer => f.write_str("Not Write Pointer"),
+            ZoneCondition::Empty => f.write_str("Empty"),
+            ZoneCondition::ImplicitlyOpen => f.write_str("Implicitly Open"),
+            ZoneCondition::ExplicitlyOpen => f.write_str("Explicitly Open"),
+            ZoneCondition::Closed => f.write_str("Closed"),
+            ZoneCondition::ReadOnly => f.write_str("Read Only"),
+            ZoneCondition::Full => f.write_str("Full"),
+            ZoneCondition::Offline => f.write_str("Offline"),
+        }
+    }
+}
+
+impl std::fmt::Display for DeviceModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeviceModel::None => f.write_str("none"),
+            DeviceModel::HostAware => f.write_str("host-aware"),
+            DeviceModel::HostManaged => f.write_str("host-managed"),
+        }
+    }
+}
 
 #[cfg(test)]
 mod types_tests;

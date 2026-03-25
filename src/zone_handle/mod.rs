@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::ZonedDevice;
 use crate::error::{Result, ZonedError};
-use crate::types::{SECTOR_SIZE, Zone};
+use crate::types::{SECTOR_SIZE, Sector, Zone, ZoneIndex};
 use crate::zone_allocator::AllocatorInner;
 
 /// Exclusive handle to a single zone on a zoned block device.
@@ -18,10 +18,10 @@ use crate::zone_allocator::AllocatorInner;
 ///
 /// ```no_run
 /// use std::sync::Arc;
-/// use zoned::{ZonedDevice, ZoneHandle};
+/// use zoned::{ZonedDevice, ZoneHandle, ZoneIndex};
 ///
 /// let dev = Arc::new(ZonedDevice::open_writable("/dev/sdb")?);
-/// let mut handle = ZoneHandle::new(dev, 5)?;
+/// let mut handle = ZoneHandle::new(dev, ZoneIndex(5))?;
 ///
 /// handle.open()?;
 /// let written = handle.write_sequential(&[0u8; 4096])?;
@@ -31,11 +31,11 @@ use crate::zone_allocator::AllocatorInner;
 /// ```
 pub struct ZoneHandle {
     device: Arc<ZonedDevice>,
-    zone_index: u32,
-    start: u64,
-    len: u64,
-    capacity: u64,
-    write_pointer: u64,
+    zone_index: ZoneIndex,
+    start: Sector,
+    len: Sector,
+    capacity: Sector,
+    write_pointer: Sector,
     allocator: Option<Arc<AllocatorInner>>,
 }
 
@@ -45,7 +45,7 @@ impl ZoneHandle {
     /// Queries the device to populate zone metadata (start, length, capacity,
     /// current write pointer). Does not register with any allocator — the
     /// caller is responsible for ensuring exclusivity.
-    pub fn new(device: Arc<ZonedDevice>, zone_index: u32) -> Result<Self> {
+    pub fn new(device: Arc<ZonedDevice>, zone_index: ZoneIndex) -> Result<Self> {
         Self::new_inner(device, zone_index, None)
     }
 
@@ -54,7 +54,7 @@ impl ZoneHandle {
     /// The zone will be released back to the allocator when this handle is dropped.
     pub(crate) fn new_with_allocator(
         device: Arc<ZonedDevice>,
-        zone_index: u32,
+        zone_index: ZoneIndex,
         allocator: Arc<AllocatorInner>,
     ) -> Result<Self> {
         Self::new_inner(device, zone_index, Some(allocator))
@@ -62,17 +62,17 @@ impl ZoneHandle {
 
     fn new_inner(
         device: Arc<ZonedDevice>,
-        zone_index: u32,
+        zone_index: ZoneIndex,
         allocator: Option<Arc<AllocatorInner>>,
     ) -> Result<Self> {
         let info = device.device_info()?;
-        let start = zone_index as u64 * info.zone_size as u64;
+        let start = info.zone_size * zone_index.0 as u64;
         let zones = device.report_zones(start, 1)?;
 
         if zones.is_empty() {
             return Err(ZonedError::InvalidRange {
                 sector: start,
-                nr_sectors: 0,
+                nr_sectors: Sector::ZERO,
             });
         }
 
@@ -105,7 +105,7 @@ impl ZoneHandle {
         }
 
         let written = self.device.write_at(self.write_pointer, buf)?;
-        let sectors_written = written as u64 / SECTOR_SIZE;
+        let sectors_written = Sector(written as u64 / SECTOR_SIZE);
         self.write_pointer += sectors_written;
         Ok(written)
     }
@@ -151,39 +151,39 @@ impl ZoneHandle {
         if zones.is_empty() {
             return Err(ZonedError::InvalidRange {
                 sector: self.start,
-                nr_sectors: 0,
+                nr_sectors: Sector::ZERO,
             });
         }
         Ok(zones[0].clone())
     }
 
     /// Start sector of this zone.
-    pub fn start(&self) -> u64 {
+    pub fn start(&self) -> Sector {
         self.start
     }
 
     /// Length of this zone in sectors.
-    pub fn len(&self) -> u64 {
+    pub fn len(&self) -> Sector {
         self.len
     }
 
     /// Returns true if the zone has zero length. Always false for valid zones.
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len.0 == 0
     }
 
     /// Usable capacity of this zone in sectors.
-    pub fn capacity(&self) -> u64 {
+    pub fn capacity(&self) -> Sector {
         self.capacity
     }
 
     /// Current locally-tracked write pointer position (in sectors).
-    pub fn write_pointer(&self) -> u64 {
+    pub fn write_pointer(&self) -> Sector {
         self.write_pointer
     }
 
     /// Zone index on the device.
-    pub fn zone_index(&self) -> u32 {
+    pub fn zone_index(&self) -> ZoneIndex {
         self.zone_index
     }
 }

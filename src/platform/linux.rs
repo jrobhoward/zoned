@@ -4,7 +4,7 @@ use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, ZonedError};
-use crate::types::{DeviceInfo, Zone, ZoneCondition, ZoneType};
+use crate::types::{DeviceInfo, Sector, Zone, ZoneCondition, ZoneType};
 
 // Linux ioctl magic number for block devices
 const BLK_IOCTL_MAGIC: u8 = 0x12;
@@ -128,10 +128,10 @@ fn parse_zone_condition(raw: u8) -> ZoneCondition {
 
 fn blk_zone_to_zone(bz: &BlkZone, has_capacity: bool) -> Zone {
     Zone {
-        start: bz.start,
-        len: bz.len,
-        capacity: if has_capacity { bz.capacity } else { bz.len },
-        write_pointer: bz.wp,
+        start: Sector(bz.start),
+        len: Sector(bz.len),
+        capacity: Sector(if has_capacity { bz.capacity } else { bz.len }),
+        write_pointer: Sector(bz.wp),
         zone_type: parse_zone_type(bz.zone_type),
         condition: parse_zone_condition(bz.cond),
         non_seq: bz.non_seq != 0,
@@ -281,12 +281,12 @@ impl PlatformDevice {
         }
 
         Ok(DeviceInfo {
-            zone_size,
+            zone_size: Sector(zone_size as u64),
             nr_zones,
         })
     }
 
-    pub(crate) fn report_zones(&self, sector: u64, max_zones: u32) -> Result<Vec<Zone>> {
+    pub(crate) fn report_zones(&self, sector: Sector, max_zones: u32) -> Result<Vec<Zone>> {
         let zone_count = max_zones.max(1) as usize;
 
         // Allocate a buffer large enough for the header + zone_count BlkZone entries
@@ -297,7 +297,7 @@ impl PlatformDevice {
 
         // Write the request header: sector to start from, max zones to return
         let header = BlkZoneReportHeader {
-            sector,
+            sector: sector.0,
             nr_zones: zone_count as u32,
             flags: 0,
         };
@@ -372,8 +372,11 @@ impl PlatformDevice {
         Ok(zones)
     }
 
-    pub(crate) fn reset_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
-        let range = BlkZoneRange { sector, nr_sectors };
+    pub(crate) fn reset_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
+        let range = BlkZoneRange {
+            sector: sector.0,
+            nr_sectors: nr_sectors.0,
+        };
 
         // SAFETY: blk_reset_zones performs an IOW ioctl that reads from the provided
         // BlkZoneRange pointer. The range is a valid local variable with proper alignment.
@@ -387,8 +390,11 @@ impl PlatformDevice {
         Ok(())
     }
 
-    pub(crate) fn open_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
-        let range = BlkZoneRange { sector, nr_sectors };
+    pub(crate) fn open_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
+        let range = BlkZoneRange {
+            sector: sector.0,
+            nr_sectors: nr_sectors.0,
+        };
 
         // SAFETY: blk_open_zones performs an IOW ioctl that reads from the provided
         // BlkZoneRange pointer. The range is a valid local variable with proper alignment.
@@ -402,8 +408,11 @@ impl PlatformDevice {
         Ok(())
     }
 
-    pub(crate) fn close_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
-        let range = BlkZoneRange { sector, nr_sectors };
+    pub(crate) fn close_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
+        let range = BlkZoneRange {
+            sector: sector.0,
+            nr_sectors: nr_sectors.0,
+        };
 
         // SAFETY: blk_close_zones performs an IOW ioctl that reads from the provided
         // BlkZoneRange pointer. The range is a valid local variable with proper alignment.
@@ -417,8 +426,11 @@ impl PlatformDevice {
         Ok(())
     }
 
-    pub(crate) fn finish_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
-        let range = BlkZoneRange { sector, nr_sectors };
+    pub(crate) fn finish_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
+        let range = BlkZoneRange {
+            sector: sector.0,
+            nr_sectors: nr_sectors.0,
+        };
 
         // SAFETY: blk_finish_zones performs an IOW ioctl that reads from the provided
         // BlkZoneRange pointer. The range is a valid local variable with proper alignment.

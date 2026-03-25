@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use zoned::{ZonedDevice, sysfs};
+//! use zoned::{Sector, ZonedDevice, sysfs};
 //!
 //! // Check device model via sysfs
 //! let props = sysfs::device_properties("/dev/sdb".as_ref())?;
@@ -20,7 +20,7 @@
 //!
 //! // Open the device and query zones
 //! let dev = ZonedDevice::open("/dev/sdb")?;
-//! let zones = dev.report_zones(0, 32)?;
+//! let zones = dev.report_zones(Sector::ZERO, 32)?;
 //! for zone in &zones {
 //!     println!("Zone at sector {}: {:?} ({:?})",
 //!         zone.start, zone.zone_type, zone.condition);
@@ -39,7 +39,8 @@ mod zone_handle;
 pub use device::ZonedDevice;
 pub use error::{Result, ZonedError};
 pub use types::{
-    DeviceInfo, DeviceModel, DeviceProperties, SECTOR_SIZE, Zone, ZoneCondition, ZoneType,
+    DeviceInfo, DeviceModel, DeviceProperties, SECTOR_SIZE, Sector, Zone, ZoneCondition, ZoneIndex,
+    ZoneType,
 };
 pub use zone_allocator::ZoneAllocator;
 pub use zone_handle::ZoneHandle;

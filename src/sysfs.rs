@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Result, ZonedError};
-use crate::types::{DeviceModel, DeviceProperties};
+use crate::types::{DeviceModel, DeviceProperties, Sector};
 
 /// Read a sysfs attribute for a block device, returning the trimmed string value.
 fn read_sysfs_attr(device_name: &str, attribute: &str) -> Result<String> {
@@ -69,7 +69,8 @@ pub fn device_properties(path: &Path) -> Result<DeviceProperties> {
     let model = device_model(path)?;
 
     let chunk_str = read_sysfs_attr(&name, "chunk_sectors")?;
-    let chunk_sectors = parse_u32_attr(&name, "chunk_sectors", &chunk_str)?;
+    let chunk_sectors_raw = parse_u32_attr(&name, "chunk_sectors", &chunk_str)?;
+    let chunk_sectors = Sector(chunk_sectors_raw as u64);
 
     let nr_str = read_sysfs_attr(&name, "nr_zones")?;
     let nr_zones = parse_u32_attr(&name, "nr_zones", &nr_str)?;

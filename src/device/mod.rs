@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::error::{Result, ZonedError};
 use crate::platform::PlatformDevice;
-use crate::types::{DeviceInfo, SECTOR_SIZE, Zone};
+use crate::types::{DeviceInfo, Sector, Zone};
 
 /// Handle to an open zoned block device.
 ///
@@ -12,13 +12,13 @@ use crate::types::{DeviceInfo, SECTOR_SIZE, Zone};
 /// # Example
 ///
 /// ```no_run
-/// use zoned::ZonedDevice;
+/// use zoned::{Sector, ZonedDevice};
 ///
 /// let dev = ZonedDevice::open("/dev/sdb")?;
 /// let info = dev.device_info()?;
 /// println!("Zone size: {} sectors, {} zones", info.zone_size, info.nr_zones);
 ///
-/// let zones = dev.report_zones(0, 16)?;
+/// let zones = dev.report_zones(Sector::ZERO, 16)?;
 /// for zone in &zones {
 ///     println!("{:?} at sector {}", zone.condition, zone.start);
 /// }
@@ -52,7 +52,7 @@ impl ZonedDevice {
     /// If `max_zones` is 0, it is treated as 1.
     ///
     /// The returned zones are ordered by start sector.
-    pub fn report_zones(&self, sector: u64, max_zones: u32) -> Result<Vec<Zone>> {
+    pub fn report_zones(&self, sector: Sector, max_zones: u32) -> Result<Vec<Zone>> {
         self.inner.report_zones(sector, max_zones)
     }
 
@@ -64,7 +64,7 @@ impl ZonedDevice {
         let info = self.device_info()?;
         let batch = if batch_size == 0 { 512 } else { batch_size };
         let mut all_zones = Vec::with_capacity(info.nr_zones as usize);
-        let mut sector = 0u64;
+        let mut sector = Sector::ZERO;
 
         loop {
             let zones = self.report_zones(sector, batch)?;
@@ -91,9 +91,9 @@ impl ZonedDevice {
     /// will have their write pointers reset to the zone start. Data in those
     /// zones becomes inaccessible.
     ///
-    /// To reset all zones, pass `sector = 0` and `nr_sectors` covering the
-    /// entire device.
-    pub fn reset_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
+    /// To reset all zones, pass `sector = Sector::ZERO` and `nr_sectors` covering
+    /// the entire device.
+    pub fn reset_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
         self.validate_range(sector, nr_sectors)?;
         self.inner.reset_zones(sector, nr_sectors)
     }
@@ -103,7 +103,7 @@ impl ZonedDevice {
     /// Opening a zone transitions it to the explicitly-open state. The device
     /// may have a limit on the number of simultaneously open zones
     /// (see `DeviceProperties::max_open_zones`).
-    pub fn open_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
+    pub fn open_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
         self.validate_range(sector, nr_sectors)?;
         self.inner.open_zones(sector, nr_sectors)
     }
@@ -112,7 +112,7 @@ impl ZonedDevice {
     ///
     /// Transitions open zones to the closed state, freeing open-zone resources
     /// on the device without resetting the write pointer.
-    pub fn close_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
+    pub fn close_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
         self.validate_range(sector, nr_sectors)?;
         self.inner.close_zones(sector, nr_sectors)
     }
@@ -121,7 +121,7 @@ impl ZonedDevice {
     ///
     /// Transitions zones to the full state, advancing the write pointer to the
     /// end. No more writes are possible until the zone is reset.
-    pub fn finish_zones(&self, sector: u64, nr_sectors: u64) -> Result<()> {
+    pub fn finish_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
         self.validate_range(sector, nr_sectors)?;
         self.inner.finish_zones(sector, nr_sectors)
     }
@@ -158,14 +158,14 @@ impl ZonedDevice {
     ///
     /// Requires the device to be opened with `open_writable()`.
     /// Returns `ReadOnly` error if opened read-only.
-    pub fn write_at(&self, sector_offset: u64, buf: &[u8]) -> Result<usize> {
-        let byte_offset =
-            sector_offset
-                .checked_mul(SECTOR_SIZE)
-                .ok_or(ZonedError::InvalidRange {
-                    sector: sector_offset,
-                    nr_sectors: 0,
-                })?;
+    pub fn write_at(&self, sector_offset: Sector, buf: &[u8]) -> Result<usize> {
+        let byte_offset = sector_offset
+            .0
+            .checked_mul(crate::types::SECTOR_SIZE)
+            .ok_or(ZonedError::InvalidRange {
+                sector: sector_offset,
+                nr_sectors: Sector::ZERO,
+            })?;
         self.inner.write_at(buf, byte_offset)
     }
 
@@ -175,14 +175,14 @@ impl ZonedDevice {
     /// concurrent use from multiple threads.
     ///
     /// Works with both read-only and writable device handles.
-    pub fn read_at(&self, sector_offset: u64, buf: &mut [u8]) -> Result<usize> {
-        let byte_offset =
-            sector_offset
-                .checked_mul(SECTOR_SIZE)
-                .ok_or(ZonedError::InvalidRange {
-                    sector: sector_offset,
-                    nr_sectors: 0,
-                })?;
+    pub fn read_at(&self, sector_offset: Sector, buf: &mut [u8]) -> Result<usize> {
+        let byte_offset = sector_offset
+            .0
+            .checked_mul(crate::types::SECTOR_SIZE)
+            .ok_or(ZonedError::InvalidRange {
+                sector: sector_offset,
+                nr_sectors: Sector::ZERO,
+            })?;
         self.inner.read_at(buf, byte_offset)
     }
 
@@ -200,12 +200,12 @@ impl ZonedDevice {
         self.inner.path()
     }
 
-    fn validate_range(&self, sector: u64, nr_sectors: u64) -> Result<()> {
-        if nr_sectors == 0 {
+    fn validate_range(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
+        if nr_sectors.0 == 0 {
             return Err(ZonedError::InvalidRange { sector, nr_sectors });
         }
         // Check for overflow
-        if sector.checked_add(nr_sectors).is_none() {
+        if sector.0.checked_add(nr_sectors.0).is_none() {
             return Err(ZonedError::InvalidRange { sector, nr_sectors });
         }
         Ok(())

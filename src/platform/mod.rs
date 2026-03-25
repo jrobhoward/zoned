@@ -25,25 +25,41 @@ impl PlatformDevice {
 
     pub(crate) fn report_zones(
         &self,
-        _sector: u64,
+        _sector: crate::types::Sector,
         _max_zones: u32,
     ) -> crate::error::Result<Vec<crate::types::Zone>> {
         Err(crate::error::ZonedError::UnsupportedPlatform)
     }
 
-    pub(crate) fn reset_zones(&self, _sector: u64, _nr_sectors: u64) -> crate::error::Result<()> {
+    pub(crate) fn reset_zones(
+        &self,
+        _sector: crate::types::Sector,
+        _nr_sectors: crate::types::Sector,
+    ) -> crate::error::Result<()> {
         Err(crate::error::ZonedError::UnsupportedPlatform)
     }
 
-    pub(crate) fn open_zones(&self, _sector: u64, _nr_sectors: u64) -> crate::error::Result<()> {
+    pub(crate) fn open_zones(
+        &self,
+        _sector: crate::types::Sector,
+        _nr_sectors: crate::types::Sector,
+    ) -> crate::error::Result<()> {
         Err(crate::error::ZonedError::UnsupportedPlatform)
     }
 
-    pub(crate) fn close_zones(&self, _sector: u64, _nr_sectors: u64) -> crate::error::Result<()> {
+    pub(crate) fn close_zones(
+        &self,
+        _sector: crate::types::Sector,
+        _nr_sectors: crate::types::Sector,
+    ) -> crate::error::Result<()> {
         Err(crate::error::ZonedError::UnsupportedPlatform)
     }
 
-    pub(crate) fn finish_zones(&self, _sector: u64, _nr_sectors: u64) -> crate::error::Result<()> {
+    pub(crate) fn finish_zones(
+        &self,
+        _sector: crate::types::Sector,
+        _nr_sectors: crate::types::Sector,
+    ) -> crate::error::Result<()> {
         Err(crate::error::ZonedError::UnsupportedPlatform)
     }
 

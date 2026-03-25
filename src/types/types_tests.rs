@@ -7,20 +7,20 @@ use super::*;
 #[test]
 fn zone____default_fields____are_accessible() {
     let zone = Zone {
-        start: 0,
-        len: 524288,
-        capacity: 524288,
-        write_pointer: 1024,
+        start: Sector(0),
+        len: Sector(524288),
+        capacity: Sector(524288),
+        write_pointer: Sector(1024),
         zone_type: ZoneType::SequentialWriteRequired,
         condition: ZoneCondition::ImplicitlyOpen,
         non_seq: false,
         reset_recommended: false,
     };
 
-    assert_eq!(zone.start, 0);
-    assert_eq!(zone.len, 524288);
-    assert_eq!(zone.capacity, 524288);
-    assert_eq!(zone.write_pointer, 1024);
+    assert_eq!(zone.start, Sector(0));
+    assert_eq!(zone.len, Sector(524288));
+    assert_eq!(zone.capacity, Sector(524288));
+    assert_eq!(zone.write_pointer, Sector(1024));
     assert_eq!(zone.zone_type, ZoneType::SequentialWriteRequired);
     assert_eq!(zone.condition, ZoneCondition::ImplicitlyOpen);
     assert!(!zone.non_seq);
@@ -30,10 +30,10 @@ fn zone____default_fields____are_accessible() {
 #[test]
 fn zone____clone____produces_equal_copy() {
     let zone = Zone {
-        start: 100,
-        len: 200,
-        capacity: 180,
-        write_pointer: 150,
+        start: Sector(100),
+        len: Sector(200),
+        capacity: Sector(180),
+        write_pointer: Sector(150),
         zone_type: ZoneType::Conventional,
         condition: ZoneCondition::NotWritePointer,
         non_seq: true,
@@ -90,11 +90,11 @@ fn zone_condition____all_variants____are_distinct() {
 #[test]
 fn device_info____fields____are_accessible() {
     let info = DeviceInfo {
-        zone_size: 524288,
+        zone_size: Sector(524288),
         nr_zones: 55880,
     };
 
-    assert_eq!(info.zone_size, 524288);
+    assert_eq!(info.zone_size, Sector(524288));
     assert_eq!(info.nr_zones, 55880);
 }
 
@@ -109,7 +109,7 @@ fn device_model____all_variants____are_distinct() {
 fn device_properties____fields____are_accessible() {
     let props = DeviceProperties {
         model: DeviceModel::HostManaged,
-        chunk_sectors: 524288,
+        chunk_sectors: Sector(524288),
         nr_zones: 55880,
         zone_append_max_bytes: 0,
         max_open_zones: 128,
@@ -117,7 +117,7 @@ fn device_properties____fields____are_accessible() {
     };
 
     assert_eq!(props.model, DeviceModel::HostManaged);
-    assert_eq!(props.chunk_sectors, 524288);
+    assert_eq!(props.chunk_sectors, Sector(524288));
     assert_eq!(props.nr_zones, 55880);
     assert_eq!(props.zone_append_max_bytes, 0);
     assert_eq!(props.max_open_zones, 128);
@@ -127,4 +127,129 @@ fn device_properties____fields____are_accessible() {
 #[test]
 fn sector_size____constant____is_512() {
     assert_eq!(SECTOR_SIZE, 512);
+}
+
+#[test]
+fn zone_type____display____matches_expected_strings() {
+    assert_eq!(ZoneType::Conventional.to_string(), "Conventional");
+    assert_eq!(
+        ZoneType::SequentialWriteRequired.to_string(),
+        "Sequential Write Required"
+    );
+    assert_eq!(
+        ZoneType::SequentialWritePreferred.to_string(),
+        "Sequential Write Preferred"
+    );
+}
+
+#[test]
+fn zone_condition____display____matches_expected_strings() {
+    assert_eq!(
+        ZoneCondition::NotWritePointer.to_string(),
+        "Not Write Pointer"
+    );
+    assert_eq!(ZoneCondition::Empty.to_string(), "Empty");
+    assert_eq!(ZoneCondition::ImplicitlyOpen.to_string(), "Implicitly Open");
+    assert_eq!(ZoneCondition::ExplicitlyOpen.to_string(), "Explicitly Open");
+    assert_eq!(ZoneCondition::Closed.to_string(), "Closed");
+    assert_eq!(ZoneCondition::ReadOnly.to_string(), "Read Only");
+    assert_eq!(ZoneCondition::Full.to_string(), "Full");
+    assert_eq!(ZoneCondition::Offline.to_string(), "Offline");
+}
+
+#[test]
+fn device_model____display____matches_expected_strings() {
+    assert_eq!(DeviceModel::None.to_string(), "none");
+    assert_eq!(DeviceModel::HostAware.to_string(), "host-aware");
+    assert_eq!(DeviceModel::HostManaged.to_string(), "host-managed");
+}
+
+// Sector newtype tests
+
+#[test]
+fn sector____add____works() {
+    assert_eq!(Sector(10) + Sector(20), Sector(30));
+}
+
+#[test]
+fn sector____sub____works() {
+    assert_eq!(Sector(30) - Sector(10), Sector(20));
+}
+
+#[test]
+fn sector____mul_u64____works() {
+    assert_eq!(Sector(100) * 4, Sector(400));
+}
+
+#[test]
+fn sector____div_u64____works() {
+    assert_eq!(Sector(400) / 4, Sector(100));
+}
+
+#[test]
+fn sector____add_assign____works() {
+    let mut s = Sector(10);
+    s += Sector(5);
+    assert_eq!(s, Sector(15));
+}
+
+#[test]
+fn sector____to_bytes____multiplies_by_512() {
+    assert_eq!(Sector(1).to_bytes(), 512);
+    assert_eq!(Sector(0).to_bytes(), 0);
+    assert_eq!(Sector(1024).to_bytes(), 524288);
+}
+
+#[test]
+fn sector____from_bytes____aligned____returns_some() {
+    assert_eq!(Sector::from_bytes(0), Some(Sector(0)));
+    assert_eq!(Sector::from_bytes(512), Some(Sector(1)));
+    assert_eq!(Sector::from_bytes(524288), Some(Sector(1024)));
+}
+
+#[test]
+fn sector____from_bytes____unaligned____returns_none() {
+    assert_eq!(Sector::from_bytes(1), None);
+    assert_eq!(Sector::from_bytes(511), None);
+    assert_eq!(Sector::from_bytes(513), None);
+}
+
+#[test]
+fn sector____raw____returns_inner() {
+    assert_eq!(Sector(42).raw(), 42);
+}
+
+#[test]
+fn sector____display____shows_number() {
+    assert_eq!(format!("{}", Sector(12345)), "12345");
+}
+
+#[test]
+fn sector____ordering____works() {
+    assert!(Sector(10) < Sector(20));
+    assert!(Sector(20) > Sector(10));
+    assert!(Sector(10) <= Sector(10));
+}
+
+#[test]
+fn sector____zero_constant____is_zero() {
+    assert_eq!(Sector::ZERO, Sector(0));
+}
+
+// ZoneIndex newtype tests
+
+#[test]
+fn zone_index____raw____returns_inner() {
+    assert_eq!(ZoneIndex(5).raw(), 5);
+}
+
+#[test]
+fn zone_index____display____shows_number() {
+    assert_eq!(format!("{}", ZoneIndex(42)), "42");
+}
+
+#[test]
+fn zone_index____ordering____works() {
+    assert!(ZoneIndex(0) < ZoneIndex(1));
+    assert_eq!(ZoneIndex(5), ZoneIndex(5));
 }

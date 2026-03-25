@@ -17,7 +17,7 @@
 
 use std::path::Path;
 
-use zoned::{DeviceModel, ZoneCondition, ZoneType, ZonedDevice};
+use zoned::{DeviceModel, Sector, ZoneCondition, ZoneType, ZonedDevice};
 
 const DEV_PATH: &str = "/dev/sda";
 
@@ -27,7 +27,7 @@ const DEV_PATH: &str = "/dev/sda";
 //   max_open_zones = 16
 //   max_active_zones = 0
 //   zoned = host-managed
-const EXPECTED_ZONE_SIZE_SECTORS: u32 = 524288;
+const EXPECTED_ZONE_SIZE_SECTORS: u64 = 524288;
 const EXPECTED_NR_ZONES: u32 = 37256;
 const EXPECTED_MAX_OPEN: u32 = 16;
 const EXPECTED_MAX_ACTIVE: u32 = 0;
@@ -71,7 +71,8 @@ fn device_info____sda____returns_correct_zone_size() {
     let info = dev.device_info().expect("device_info failed");
 
     assert_eq!(
-        info.zone_size, EXPECTED_ZONE_SIZE_SECTORS,
+        info.zone_size,
+        Sector(EXPECTED_ZONE_SIZE_SECTORS),
         "zone_size: expected {EXPECTED_ZONE_SIZE_SECTORS}, got {}",
         info.zone_size
     );
@@ -116,7 +117,7 @@ fn sysfs____sda____properties_match_known_values() {
     let props = zoned::sysfs::device_properties(path).expect("device_properties failed");
 
     assert_eq!(props.model, DeviceModel::HostManaged);
-    assert_eq!(props.chunk_sectors, EXPECTED_ZONE_SIZE_SECTORS);
+    assert_eq!(props.chunk_sectors, Sector(EXPECTED_ZONE_SIZE_SECTORS));
     assert_eq!(props.nr_zones, EXPECTED_NR_ZONES);
     assert_eq!(props.max_open_zones, EXPECTED_MAX_OPEN);
     assert_eq!(props.max_active_zones, EXPECTED_MAX_ACTIVE);
@@ -130,7 +131,9 @@ fn sysfs____sda____properties_match_known_values() {
 fn report_zones____sda____first_zones_are_conventional() {
     let dev = require_sda!();
 
-    let zones = dev.report_zones(0, 8).expect("report_zones failed");
+    let zones = dev
+        .report_zones(Sector::ZERO, 8)
+        .expect("report_zones failed");
     assert!(!zones.is_empty(), "should return at least 1 zone");
 
     // From blkzone report, we know at least the first 5 zones are conventional.
@@ -151,8 +154,8 @@ fn report_zones____sda____first_zones_are_conventional() {
             ZoneCondition::NotWritePointer,
             "conventional zone {i} should have NotWritePointer condition"
         );
-        assert_eq!(zone.len, EXPECTED_ZONE_SIZE_SECTORS as u64);
-        assert_eq!(zone.start, i as u64 * EXPECTED_ZONE_SIZE_SECTORS as u64);
+        assert_eq!(zone.len, Sector(EXPECTED_ZONE_SIZE_SECTORS));
+        assert_eq!(zone.start, Sector(i as u64 * EXPECTED_ZONE_SIZE_SECTORS));
     }
 }
 
@@ -161,7 +164,9 @@ fn report_zones____sda____has_sequential_zones_after_conventional() {
     let dev = require_sda!();
 
     // Fetch enough zones to get past the conventional region
-    let zones = dev.report_zones(0, 128).expect("report_zones failed");
+    let zones = dev
+        .report_zones(Sector::ZERO, 128)
+        .expect("report_zones failed");
 
     let first_seq = zones
         .iter()
@@ -173,7 +178,7 @@ fn report_zones____sda____has_sequential_zones_after_conventional() {
     );
 
     let seq = first_seq.unwrap();
-    assert_eq!(seq.len, EXPECTED_ZONE_SIZE_SECTORS as u64);
+    assert_eq!(seq.len, Sector(EXPECTED_ZONE_SIZE_SECTORS));
     // Write pointer must be within the zone
     assert!(
         seq.write_pointer >= seq.start && seq.write_pointer <= seq.start + seq.len,
@@ -188,7 +193,9 @@ fn report_zones____sda____has_sequential_zones_after_conventional() {
 fn report_zones____sda____zone_starts_are_contiguous() {
     let dev = require_sda!();
 
-    let zones = dev.report_zones(0, 64).expect("report_zones failed");
+    let zones = dev
+        .report_zones(Sector::ZERO, 64)
+        .expect("report_zones failed");
     assert!(
         zones.len() >= 2,
         "need at least 2 zones to check contiguity"
@@ -208,13 +215,17 @@ fn report_zones____sda____zone_starts_are_contiguous() {
 fn report_zones____sda____all_zones_have_valid_zone_size() {
     let dev = require_sda!();
 
-    let zones = dev.report_zones(0, 256).expect("report_zones failed");
+    let zones = dev
+        .report_zones(Sector::ZERO, 256)
+        .expect("report_zones failed");
 
     for (i, zone) in zones.iter().enumerate() {
         assert_eq!(
-            zone.len, EXPECTED_ZONE_SIZE_SECTORS as u64,
+            zone.len,
+            Sector(EXPECTED_ZONE_SIZE_SECTORS),
             "zone {i} at sector {} has unexpected length {}",
-            zone.start, zone.len
+            zone.start,
+            zone.len
         );
         assert!(
             zone.capacity <= zone.len,
@@ -234,7 +245,7 @@ fn report_zones____sda____offset_query_returns_correct_start() {
     let dev = require_sda!();
 
     // Query starting from zone 100
-    let offset_sector = 100u64 * EXPECTED_ZONE_SIZE_SECTORS as u64;
+    let offset_sector = Sector(100 * EXPECTED_ZONE_SIZE_SECTORS);
     let zones = dev
         .report_zones(offset_sector, 4)
         .expect("report_zones at offset failed");
@@ -265,13 +276,13 @@ fn report_all_zones____sda____returns_all_zones() {
     );
 
     // First zone starts at 0
-    assert_eq!(zones[0].start, 0);
+    assert_eq!(zones[0].start, Sector::ZERO);
 
     // Last zone ends at the right place
     let last = &zones[zones.len() - 1];
     assert_eq!(
         last.start,
-        (EXPECTED_NR_ZONES as u64 - 1) * EXPECTED_ZONE_SIZE_SECTORS as u64
+        Sector((EXPECTED_NR_ZONES as u64 - 1) * EXPECTED_ZONE_SIZE_SECTORS)
     );
 }
 

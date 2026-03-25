@@ -2,6 +2,8 @@
 #![allow(clippy::expect_used)]
 #![allow(non_snake_case)]
 
+use crate::types::Sector;
+
 use super::*;
 
 #[test]
@@ -39,15 +41,15 @@ fn validate_range____zero_nr_sectors____returns_invalid_range() {
     // We need to test validate_range indirectly through the public API.
     // If open succeeds, try reset_zones with invalid range.
     if let Ok(dev) = ZonedDevice::open(tmpfile.path()) {
-        let result = dev.reset_zones(0, 0);
+        let result = dev.reset_zones(Sector::ZERO, Sector::ZERO);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
             matches!(
                 err,
                 ZonedError::InvalidRange {
-                    sector: 0,
-                    nr_sectors: 0
+                    sector: Sector(0),
+                    nr_sectors: Sector(0),
                 }
             ),
             "Expected InvalidRange, got: {err:?}"
@@ -60,7 +62,7 @@ fn validate_range____overflow____returns_invalid_range() {
     let tmpfile = tempfile::NamedTempFile::new().unwrap();
 
     if let Ok(dev) = ZonedDevice::open(tmpfile.path()) {
-        let result = dev.reset_zones(u64::MAX, 1);
+        let result = dev.reset_zones(Sector(u64::MAX), Sector(1));
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -101,7 +103,7 @@ fn is_writable____read_only_open____returns_false() {
 fn write_at____read_only_device____returns_read_only_error() {
     let tmpfile = tempfile::NamedTempFile::new().unwrap();
     if let Ok(dev) = ZonedDevice::open(tmpfile.path()) {
-        let result = dev.write_at(0, &[0u8; 512]);
+        let result = dev.write_at(Sector::ZERO, &[0u8; 512]);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -116,7 +118,7 @@ fn write_at____writable_file____succeeds() {
     let tmpfile = tempfile::NamedTempFile::new().unwrap();
     if let Ok(dev) = ZonedDevice::open_writable(tmpfile.path()) {
         let data = vec![0xABu8; 512];
-        let result = dev.write_at(0, &data);
+        let result = dev.write_at(Sector::ZERO, &data);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 512);
     }
@@ -127,10 +129,10 @@ fn read_at____writable_file____reads_back_written_data() {
     let tmpfile = tempfile::NamedTempFile::new().unwrap();
     if let Ok(dev) = ZonedDevice::open_writable(tmpfile.path()) {
         let data = vec![0xCDu8; 512];
-        dev.write_at(0, &data).unwrap();
+        dev.write_at(Sector::ZERO, &data).unwrap();
 
         let mut buf = vec![0u8; 512];
-        let n = dev.read_at(0, &mut buf).unwrap();
+        let n = dev.read_at(Sector::ZERO, &mut buf).unwrap();
         assert_eq!(n, 512);
         assert_eq!(buf, data);
     }

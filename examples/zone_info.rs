@@ -28,8 +28,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 use zoned::{
-    DeviceModel, SECTOR_SIZE, ZoneAllocator, ZoneCondition, ZoneHandle, ZoneType, ZonedDevice,
-    sysfs,
+    DeviceModel, Sector, ZoneAllocator, ZoneCondition, ZoneHandle, ZoneType, ZonedDevice, sysfs,
 };
 
 #[derive(Parser)]
@@ -159,11 +158,11 @@ fn run_info(
 
     let props = sysfs::device_properties(path)?;
     println!("=== Device Properties (sysfs) ===");
-    println!("  Model:               {}", format_model(props.model));
+    println!("  Model:               {}", props.model);
     println!(
         "  Zone size:           {} sectors ({} MiB)",
         props.chunk_sectors,
-        props.chunk_sectors as u64 * 512 / (1024 * 1024)
+        props.chunk_sectors.to_bytes() / (1024 * 1024)
     );
     println!("  Number of zones:     {}", props.nr_zones);
     println!(
@@ -198,20 +197,15 @@ fn run_info(
     println!("  Retrieved {} zones", zones.len());
     println!();
 
-    let mut type_counts: HashMap<&str, u32> = HashMap::new();
-    let mut cond_counts: HashMap<&str, u32> = HashMap::new();
-    let mut total_capacity_sectors: u64 = 0;
-    let mut total_len_sectors: u64 = 0;
+    let mut cond_counts: HashMap<ZoneCondition, u32> = HashMap::new();
+    let mut total_capacity_sectors = Sector::ZERO;
+    let mut total_len_sectors = Sector::ZERO;
     let mut conventional_count: u32 = 0;
     let mut seq_required_count: u32 = 0;
     let mut seq_preferred_count: u32 = 0;
 
     for zone in &zones {
-        let type_name = format_zone_type(zone.zone_type);
-        *type_counts.entry(type_name).or_insert(0) += 1;
-
-        let cond_name = format_zone_condition(zone.condition);
-        *cond_counts.entry(cond_name).or_insert(0) += 1;
+        *cond_counts.entry(zone.condition).or_insert(0) += 1;
 
         total_capacity_sectors += zone.capacity;
         total_len_sectors += zone.len;
@@ -223,8 +217,8 @@ fn run_info(
         }
     }
 
-    let total_capacity_gib = total_capacity_sectors * 512 / (1024 * 1024 * 1024);
-    let total_len_gib = total_len_sectors * 512 / (1024 * 1024 * 1024);
+    let total_capacity_gib = total_capacity_sectors.to_bytes() / (1024 * 1024 * 1024);
+    let total_len_gib = total_len_sectors.to_bytes() / (1024 * 1024 * 1024);
 
     println!("=== Zone Type Summary ===");
     println!("  Conventional:             {:>6}", conventional_count);
@@ -235,19 +229,19 @@ fn run_info(
 
     println!("=== Zone Condition Summary ===");
     let cond_order = [
-        "Not Write Pointer",
-        "Empty",
-        "Implicitly Open",
-        "Explicitly Open",
-        "Closed",
-        "Full",
-        "Read Only",
-        "Offline",
+        ZoneCondition::NotWritePointer,
+        ZoneCondition::Empty,
+        ZoneCondition::ImplicitlyOpen,
+        ZoneCondition::ExplicitlyOpen,
+        ZoneCondition::Closed,
+        ZoneCondition::Full,
+        ZoneCondition::ReadOnly,
+        ZoneCondition::Offline,
     ];
-    for name in &cond_order {
-        let count = cond_counts.get(name).copied().unwrap_or(0);
+    for cond in &cond_order {
+        let count = cond_counts.get(cond).copied().unwrap_or(0);
         if count > 0 {
-            println!("  {name:<25} {count:>6}");
+            println!("  {cond:<25} {count:>6}");
         }
     }
     println!();
@@ -263,7 +257,7 @@ fn run_info(
     );
     if total_len_sectors > total_capacity_sectors {
         let overhead = total_len_sectors - total_capacity_sectors;
-        let overhead_mib = overhead * 512 / (1024 * 1024);
+        let overhead_mib = overhead.to_bytes() / (1024 * 1024);
         println!(
             "  Capacity overhead:   {} sectors ({} MiB)",
             overhead, overhead_mib
@@ -287,8 +281,8 @@ fn run_info(
                 zone.len,
                 zone.capacity,
                 zone.write_pointer,
-                format_zone_type(zone.zone_type),
-                format_zone_condition(zone.condition),
+                zone.zone_type,
+                zone.condition,
             );
         }
         println!();
@@ -361,10 +355,10 @@ fn run_reset_all(path: &Path, skip_confirm: bool) -> Result<(), Box<dyn std::err
     }
 
     // Reset all sequential zones in one operation covering the entire device
-    let total_sectors = info.nr_zones as u64 * info.zone_size as u64;
+    let total_sectors = info.zone_size * info.nr_zones as u64;
     println!("Resetting all sequential zones...");
     let start = Instant::now();
-    dev.reset_zones(0, total_sectors)?;
+    dev.reset_zones(Sector::ZERO, total_sectors)?;
     let elapsed = start.elapsed();
 
     println!(
@@ -423,12 +417,12 @@ fn run_bench(
         .into());
     }
 
-    let zone_size_bytes = props.chunk_sectors as u64 * SECTOR_SIZE;
+    let zone_size_bytes = props.chunk_sectors.to_bytes();
     let data_per_zone_mib = zone_size_bytes / (1024 * 1024);
     let total_data_mib = data_per_zone_mib * total_zones_needed as u64;
 
     println!("=== Benchmark Configuration ===");
-    println!("  Model:               {}", format_model(props.model));
+    println!("  Model:               {}", props.model);
     println!(
         "  Zone size:           {} MiB ({} sectors)",
         data_per_zone_mib, props.chunk_sectors
@@ -547,7 +541,7 @@ fn run_bench(
             for mut handle in handles {
                 let zone_start_time = Instant::now();
                 let zone_idx = handle.zone_index();
-                let capacity_bytes = handle.capacity() * SECTOR_SIZE;
+                let capacity_bytes = handle.capacity().to_bytes();
                 let mut zone_bytes: u64 = 0;
 
                 // Write the zone to full capacity
@@ -655,8 +649,8 @@ fn run_bench(
     println!();
     println!("Resetting zones...");
     for zone_idx in &allocated {
-        let zone_start = *zone_idx as u64 * props.chunk_sectors as u64;
-        dev.reset_zones(zone_start, props.chunk_sectors as u64)
+        let zone_start = props.chunk_sectors * zone_idx.raw() as u64;
+        dev.reset_zones(zone_start, props.chunk_sectors)
             .map_err(|e| format!("failed to reset zone {zone_idx}: {e}"))?;
     }
     println!("  Reset {} zones", allocated.len());
@@ -804,39 +798,10 @@ fn check_no_partitions(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 // Formatting helpers
 // ============================================================
 
-fn format_model(model: DeviceModel) -> &'static str {
-    match model {
-        DeviceModel::None => "none (not zoned)",
-        DeviceModel::HostAware => "host-aware",
-        DeviceModel::HostManaged => "host-managed",
-    }
-}
-
 fn format_limit(value: u32) -> String {
     if value == 0 {
         "unlimited".to_string()
     } else {
         value.to_string()
-    }
-}
-
-fn format_zone_type(zt: ZoneType) -> &'static str {
-    match zt {
-        ZoneType::Conventional => "Conventional",
-        ZoneType::SequentialWriteRequired => "Sequential Write Required",
-        ZoneType::SequentialWritePreferred => "Sequential Write Preferred",
-    }
-}
-
-fn format_zone_condition(zc: ZoneCondition) -> &'static str {
-    match zc {
-        ZoneCondition::NotWritePointer => "Not Write Pointer",
-        ZoneCondition::Empty => "Empty",
-        ZoneCondition::ImplicitlyOpen => "Implicitly Open",
-        ZoneCondition::ExplicitlyOpen => "Explicitly Open",
-        ZoneCondition::Closed => "Closed",
-        ZoneCondition::ReadOnly => "Read Only",
-        ZoneCondition::Full => "Full",
-        ZoneCondition::Offline => "Offline",
     }
 }
