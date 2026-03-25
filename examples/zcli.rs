@@ -454,65 +454,61 @@ fn run_info(
     batch_size: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dev = ZonedDevice::builder(path).validate_all().open()?;
-    let props = sysfs::device_properties(path)?;
     let info = dev.device_info()?;
 
-    println!("=== Device Identity ===");
-    if let Some(ref v) = props.vendor {
-        println!("  Vendor:              {v}");
-    }
-    if let Some(ref m) = props.model_name {
-        println!("  Model:               {m}");
-    }
-    println!("  Zone model:          {}", props.model);
-    if let Some(ref s) = props.scheduler {
-        println!("  Scheduler:           {s}");
-    }
-    println!();
+    // sysfs properties are Linux-only; gracefully skip on other platforms.
+    let props = sysfs::device_properties(path).ok();
 
-    println!("=== Device Properties (sysfs) ===");
-    println!(
-        "  Zone size:           {} sectors ({} MiB)",
-        props.chunk_sectors,
-        props.chunk_sectors.to_bytes() / (1024 * 1024)
-    );
-    println!("  Number of zones:     {}", props.nr_zones);
-    if props.capacity_sectors.raw() > 0 {
-        println!(
-            "  Total capacity:      {} sectors ({:.1} GiB)",
-            props.capacity_sectors,
-            props.capacity_sectors.to_bytes() as f64 / (1024.0 * 1024.0 * 1024.0)
-        );
-    }
-    println!(
-        "  Zone append max:     {} bytes",
-        props.zone_append_max_bytes
-    );
-    println!(
-        "  Max open zones:      {}",
-        format_limit(props.max_open_zones)
-    );
-    println!(
-        "  Max active zones:    {}",
-        format_limit(props.max_active_zones)
-    );
-    if props.logical_block_size > 0 {
-        println!("  Logical block size:  {} bytes", props.logical_block_size);
-    }
-    if props.physical_block_size > 0 {
-        println!("  Physical block size: {} bytes", props.physical_block_size);
-    }
-    if props.max_sectors_kb > 0 {
-        println!("  Max I/O size:        {} KiB", props.max_sectors_kb);
-    }
-    if props.max_hw_sectors_kb > 0 {
-        println!("  Max HW I/O size:     {} KiB", props.max_hw_sectors_kb);
+    println!("=== Device Identity ===");
+    if let Some(ref p) = props {
+        if let Some(ref v) = p.vendor {
+            println!("  Vendor:              {v}");
+        }
+        if let Some(ref m) = p.model_name {
+            println!("  Model:               {m}");
+        }
+        println!("  Zone model:          {}", p.model);
+        if let Some(ref s) = p.scheduler {
+            println!("  Scheduler:           {s}");
+        }
     }
     println!();
 
     println!("=== Device Info (ioctl) ===");
-    println!("  Zone size:           {} sectors", info.zone_size);
+    println!(
+        "  Zone size:           {} sectors ({} MiB)",
+        info.zone_size,
+        info.zone_size.to_bytes() / (1024 * 1024)
+    );
     println!("  Number of zones:     {}", info.nr_zones);
+
+    if let Some(ref p) = props {
+        if p.capacity_sectors.raw() > 0 {
+            println!(
+                "  Total capacity:      {} sectors ({:.1} GiB)",
+                p.capacity_sectors,
+                p.capacity_sectors.to_bytes() as f64 / (1024.0 * 1024.0 * 1024.0)
+            );
+        }
+        println!("  Zone append max:     {} bytes", p.zone_append_max_bytes);
+        println!("  Max open zones:      {}", format_limit(p.max_open_zones));
+        println!(
+            "  Max active zones:    {}",
+            format_limit(p.max_active_zones)
+        );
+        if p.logical_block_size > 0 {
+            println!("  Logical block size:  {} bytes", p.logical_block_size);
+        }
+        if p.physical_block_size > 0 {
+            println!("  Physical block size: {} bytes", p.physical_block_size);
+        }
+        if p.max_sectors_kb > 0 {
+            println!("  Max I/O size:        {} KiB", p.max_sectors_kb);
+        }
+        if p.max_hw_sectors_kb > 0 {
+            println!("  Max HW I/O size:     {} KiB", p.max_hw_sectors_kb);
+        }
+    }
     println!();
 
     // Use zone_iter() for lazy zone census
@@ -1177,7 +1173,6 @@ fn run_bench(
     do_fsync: bool,
     skip_confirm: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let props = sysfs::device_properties(path)?;
     let total_zones_needed = threads * zones_per_thread;
     let buf_size = (buf_size_kib as usize) * 1024;
 
@@ -1188,7 +1183,11 @@ fn run_bench(
         .into());
     }
 
-    if let Some(max_open) = props.max_open_zones
+    // sysfs is Linux-only; use device_info for zone size on all platforms.
+    let props = sysfs::device_properties(path).ok();
+    let max_open_zones = props.as_ref().and_then(|p| p.max_open_zones);
+
+    if let Some(max_open) = max_open_zones
         && threads > max_open
     {
         return Err(format!(
@@ -1198,15 +1197,36 @@ fn run_bench(
         .into());
     }
 
-    let zone_size_bytes = props.chunk_sectors.to_bytes();
+    // Open device early so we can get zone size via ioctl
+    let dev = if o_direct {
+        Arc::new(
+            ZonedDevice::builder(path)
+                .direct_io()
+                .validate_all()
+                .open()?,
+        )
+    } else {
+        Arc::new(
+            ZonedDevice::builder(path)
+                .writable()
+                .validate_all()
+                .open()?,
+        )
+    };
+    let info = dev.device_info()?;
+    let zone_size = info.zone_size;
+
+    let zone_size_bytes = zone_size.to_bytes();
     let data_per_zone_mib = zone_size_bytes / (1024 * 1024);
     let total_data_mib = data_per_zone_mib * total_zones_needed as u64;
 
     println!("=== Benchmark Configuration ===");
-    println!("  Model:               {}", props.model);
+    if let Some(ref p) = props {
+        println!("  Model:               {}", p.model);
+    }
     println!(
         "  Zone size:           {} MiB ({} sectors)",
-        data_per_zone_mib, props.chunk_sectors
+        data_per_zone_mib, zone_size
     );
     println!("  Writer threads:      {threads}");
     println!("  Zones per thread:    {zones_per_thread}");
@@ -1229,10 +1249,7 @@ fn run_bench(
         if do_fsync { "yes" } else { "no" }
     );
     println!("  Total data:          {total_data_mib} MiB");
-    println!(
-        "  Max open zones:      {}",
-        format_limit(props.max_open_zones)
-    );
+    println!("  Max open zones:      {}", format_limit(max_open_zones));
     println!();
 
     if !skip_confirm {
@@ -1244,21 +1261,6 @@ fn run_bench(
         confirm()?;
     }
 
-    let dev = if o_direct {
-        Arc::new(
-            ZonedDevice::builder(path)
-                .direct_io()
-                .validate_all()
-                .open()?,
-        )
-    } else {
-        Arc::new(
-            ZonedDevice::builder(path)
-                .writable()
-                .validate_all()
-                .open()?,
-        )
-    };
     let allocator = ZoneAllocator::new(dev.clone());
 
     println!("Allocating {total_zones_needed} zones...");
@@ -1431,8 +1433,8 @@ fn run_bench(
     println!();
     println!("Resetting zones...");
     for zone_idx in &allocated {
-        let zone_start = props.chunk_sectors * zone_idx.raw() as u64;
-        dev.reset_zones(zone_start, props.chunk_sectors)
+        let zone_start = zone_size * zone_idx.raw() as u64;
+        dev.reset_zones(zone_start, zone_size)
             .map_err(|e| format!("failed to reset zone {zone_idx}: {e}"))?;
     }
     println!("  Reset {} zones", allocated.len());

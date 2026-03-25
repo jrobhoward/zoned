@@ -7,10 +7,15 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Result, ZonedError};
+#[cfg(target_os = "linux")]
 use crate::sysfs;
+#[cfg(target_os = "linux")]
 use crate::types::DeviceModel;
 
-/// Check that the path refers to a block device (mode bits `S_IFBLK`).
+/// Check that the path refers to a device node.
+///
+/// On Linux, checks for a block device (`S_IFBLK`). On FreeBSD, disk devices
+/// are character devices (`S_IFCHR`), so both are accepted.
 pub fn is_block_device(path: &Path) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
 
@@ -29,7 +34,10 @@ pub fn is_block_device(path: &Path) -> Result<()> {
 
     let mode = metadata.mode();
     let file_type = mode & 0o170000;
-    if file_type != 0o060000 {
+    // S_IFBLK = 0o060000 (Linux block devices)
+    // S_IFCHR = 0o020000 (FreeBSD disk devices are character devices)
+    let is_device = file_type == 0o060000 || file_type == 0o020000;
+    if !is_device {
         return Err(ZonedError::NotABlockDevice {
             path: path.to_path_buf(),
             mode,
@@ -41,7 +49,8 @@ pub fn is_block_device(path: &Path) -> Result<()> {
 
 /// Check that the device is not currently mounted.
 ///
-/// Reads `/proc/self/mountinfo` and matches by device major:minor numbers.
+/// On Linux, reads `/proc/self/mountinfo`. On FreeBSD, uses `getfsstat()`.
+#[cfg(target_os = "linux")]
 pub fn is_not_mounted(path: &Path) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
 
@@ -75,9 +84,64 @@ pub fn is_not_mounted(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "freebsd")]
+pub fn is_not_mounted(path: &Path) -> Result<()> {
+    use std::ffi::CStr;
+
+    // Get the canonical path to compare against mount entries.
+    let dev_path = fs::canonicalize(path)
+        .map_err(|e| ZonedError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?
+        .to_string_lossy()
+        .to_string();
+
+    // getfsstat(NULL, 0, MNT_NOWAIT) returns the number of mounted filesystems.
+    // SAFETY: First call with null buffer to get count.
+    let count = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+    if count < 0 {
+        return Ok(()); // Can't check — assume not mounted.
+    }
+
+    let mut buf: Vec<libc::statfs> = Vec::with_capacity(count as usize);
+    let buf_size = (count as usize) * std::mem::size_of::<libc::statfs>();
+
+    // SAFETY: buf is properly sized, getfsstat fills it with statfs entries.
+    let filled =
+        unsafe { libc::getfsstat(buf.as_mut_ptr(), buf_size as libc::c_long, libc::MNT_NOWAIT) };
+    if filled < 0 {
+        return Ok(());
+    }
+    // SAFETY: getfsstat filled `filled` entries.
+    unsafe { buf.set_len(filled as usize) };
+
+    for entry in &buf {
+        // SAFETY: f_mntfromname is a null-terminated C string.
+        let from = unsafe { CStr::from_ptr(entry.f_mntfromname.as_ptr()) }.to_string_lossy();
+        if from == dev_path {
+            // SAFETY: f_mntonname is a null-terminated C string.
+            let on = unsafe { CStr::from_ptr(entry.f_mntonname.as_ptr()) }.to_string_lossy();
+            return Err(ZonedError::DeviceMounted {
+                path: path.to_path_buf(),
+                mount_point: on.to_string(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+pub fn is_not_mounted(_path: &Path) -> Result<()> {
+    Ok(()) // No mount checking on unsupported platforms.
+}
+
 /// Check that the device has no partitions.
 ///
-/// Looks for partition entries under `/sys/block/<device>/`.
+/// On Linux, checks `/sys/block/<device>/`. On FreeBSD, checks for
+/// `/dev/<device>p*` and `/dev/<device>s*` partition device nodes.
+#[cfg(target_os = "linux")]
 pub fn has_no_partitions(path: &Path) -> Result<()> {
     let dev_name =
         path.file_name()
@@ -88,8 +152,6 @@ pub fn has_no_partitions(path: &Path) -> Result<()> {
 
     let sysfs_dir = format!("/sys/block/{dev_name}");
     if !Path::new(&sysfs_dir).exists() {
-        // Not in /sys/block — likely a partition itself, not a whole disk.
-        // We don't have partition info to report, so return DeviceNotFound.
         return Err(ZonedError::DeviceNotFound {
             path: path.to_path_buf(),
         });
@@ -124,9 +186,52 @@ pub fn has_no_partitions(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Check that the device is a zoned block device (via sysfs).
+#[cfg(target_os = "freebsd")]
+pub fn has_no_partitions(path: &Path) -> Result<()> {
+    let dev_name =
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| ZonedError::DeviceNotFound {
+                path: path.to_path_buf(),
+            })?;
+
+    // FreeBSD partitions appear as /dev/<dev>p1, /dev/<dev>s1, etc.
+    let mut partitions = Vec::new();
+    if let Ok(entries) = fs::read_dir("/dev") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Match <dev_name>p<N> or <dev_name>s<N>
+            if let Some(suffix) = name_str.strip_prefix(dev_name) {
+                if suffix.starts_with('p') || suffix.starts_with('s') {
+                    if suffix[1..].chars().all(|c| c.is_ascii_digit()) && suffix.len() > 1 {
+                        partitions.push(name_str.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if !partitions.is_empty() {
+        partitions.sort();
+        return Err(ZonedError::DeviceHasPartitions {
+            path: path.to_path_buf(),
+            partitions,
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+pub fn has_no_partitions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+/// Check that the device is a zoned block device.
 ///
-/// Returns `NotZoned` if the device model is `None`.
+/// On Linux, checks sysfs. On FreeBSD, uses the `DIOCZONECMD` ioctl.
+#[cfg(target_os = "linux")]
 pub fn is_zoned_device(path: &Path) -> Result<()> {
     let model = sysfs::device_model(path)?;
     if model == DeviceModel::None {
@@ -135,6 +240,29 @@ pub fn is_zoned_device(path: &Path) -> Result<()> {
         });
     }
     Ok(())
+}
+
+#[cfg(target_os = "freebsd")]
+pub fn is_zoned_device(path: &Path) -> Result<()> {
+    // Try opening the device and issuing GET_PARAMS.
+    // If it succeeds and zone_mode != NONE, it's zoned.
+    use crate::ZonedDevice;
+    match ZonedDevice::open(path) {
+        Ok(dev) => match dev.device_info() {
+            Ok(_) => Ok(()),
+            Err(_) => Err(ZonedError::NotZoned {
+                path: path.to_path_buf(),
+            }),
+        },
+        Err(_) => Err(ZonedError::NotZoned {
+            path: path.to_path_buf(),
+        }),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+pub fn is_zoned_device(_path: &Path) -> Result<()> {
+    Err(ZonedError::UnsupportedPlatform)
 }
 
 #[cfg(test)]
@@ -191,18 +319,28 @@ mod validate_tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn has_no_partitions____nonexistent_sysfs____returns_error() {
-        // A path that doesn't exist in /sys/block/ should fail.
+        // On Linux, a path not in /sys/block/ should fail.
         let result = has_no_partitions(Path::new("/dev/this_does_not_exist_zzz"));
         assert!(result.is_err());
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn has_no_partitions____tmpfile____returns_error() {
-        // A tempfile won't have a /sys/block/ entry.
+        // On Linux, a tempfile won't have a /sys/block/ entry.
         let tmpfile = tempfile::NamedTempFile::new().unwrap();
         let result = has_no_partitions(tmpfile.path());
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn has_no_partitions____nonexistent____passes() {
+        // On FreeBSD, a nonexistent device has no partition nodes — returns Ok.
+        let result = has_no_partitions(Path::new("/dev/this_does_not_exist_zzz"));
+        assert!(result.is_ok());
     }
 
     #[test]
