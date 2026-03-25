@@ -216,8 +216,8 @@ fn sysfs____nullblk____properties_match_config() {
     assert_eq!(props.model, DeviceModel::HostManaged);
     assert_eq!(props.chunk_sectors, Sector(ZONE_SIZE_SECTORS));
     assert_eq!(props.nr_zones, EXPECTED_NR_ZONES);
-    assert_eq!(props.max_open_zones, ZONE_MAX_OPEN);
-    assert_eq!(props.max_active_zones, ZONE_MAX_ACTIVE);
+    assert_eq!(props.max_open_zones, Some(ZONE_MAX_OPEN));
+    assert_eq!(props.max_active_zones, Some(ZONE_MAX_ACTIVE));
 }
 
 // ============================================================
@@ -282,7 +282,8 @@ fn report_zones____nullblk____sequential_zones_start_empty() {
         );
         // Write pointer should be at zone start for empty zones
         assert_eq!(
-            zone.write_pointer, zone.start,
+            zone.write_pointer,
+            Some(zone.start),
             "seq zone {i} write pointer should equal start for empty zone"
         );
     }
@@ -431,7 +432,8 @@ fn reset_zones____nullblk____full_zone_becomes_empty() {
         zones[0].condition
     );
     assert_eq!(
-        zones[0].write_pointer, zones[0].start,
+        zones[0].write_pointer,
+        Some(zones[0].start),
         "write pointer should be at zone start after reset"
     );
 }
@@ -450,7 +452,7 @@ fn finish_zones____nullblk____write_pointer_advances_to_end() {
     let zones = dev.report_zones(seq_start, 1).expect("report_zones failed");
     assert_eq!(
         zones[0].write_pointer,
-        zones[0].start + zones[0].len,
+        Some(zones[0].start + zones[0].len),
         "write pointer should be at zone end after finish"
     );
 }
@@ -613,7 +615,7 @@ fn write_at____nullblk____sequential_write_advances_write_pointer() {
     let zones = dev.report_zones(seq_start, 1).expect("report failed");
     assert_eq!(
         zones[0].write_pointer,
-        seq_start + Sector(8), // 4096 / 512 = 8 sectors
+        Some(seq_start + Sector(8)), // 4096 / 512 = 8 sectors
         "write pointer should have advanced by 8 sectors"
     );
 
@@ -703,7 +705,7 @@ fn zone_handle____nullblk____write_sequential_advances_write_pointer() {
 
     // Verify against the device
     let zone = handle.report().expect("report failed");
-    assert_eq!(zone.write_pointer, expected_start + Sector(8));
+    assert_eq!(zone.write_pointer, Some(expected_start + Sector(8)));
 
     // Clean up
     handle.reset().expect("reset failed");

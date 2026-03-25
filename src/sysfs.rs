@@ -128,13 +128,16 @@ pub fn device_properties(path: &Path) -> Result<DeviceProperties> {
         .and_then(|v| parse_u64_attr(&name, "zone_append_max_bytes", &v))
         .unwrap_or(0);
 
+    // 0 in sysfs means "no limit" — map to None for type safety.
     let max_open_zones = read_sysfs_queue_attr(&name, "max_open_zones")
         .and_then(|v| parse_u32_attr(&name, "max_open_zones", &v))
-        .unwrap_or(0);
+        .ok()
+        .filter(|&v| v > 0);
 
     let max_active_zones = read_sysfs_queue_attr(&name, "max_active_zones")
         .and_then(|v| parse_u32_attr(&name, "max_active_zones", &v))
-        .unwrap_or(0);
+        .ok()
+        .filter(|&v| v > 0);
 
     // Block sizes — always present for any block device.
     let logical_block_size = read_sysfs_queue_attr(&name, "logical_block_size")

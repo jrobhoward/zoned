@@ -10,7 +10,7 @@ fn zone____default_fields____are_accessible() {
         start: Sector(0),
         len: Sector(524288),
         capacity: Sector(524288),
-        write_pointer: Sector(1024),
+        write_pointer: Some(Sector(1024)),
         zone_type: ZoneType::SequentialWriteRequired,
         condition: ZoneCondition::ImplicitlyOpen,
         non_seq: false,
@@ -20,7 +20,7 @@ fn zone____default_fields____are_accessible() {
     assert_eq!(zone.start, Sector(0));
     assert_eq!(zone.len, Sector(524288));
     assert_eq!(zone.capacity, Sector(524288));
-    assert_eq!(zone.write_pointer, Sector(1024));
+    assert_eq!(zone.write_pointer, Some(Sector(1024)));
     assert_eq!(zone.zone_type, ZoneType::SequentialWriteRequired);
     assert_eq!(zone.condition, ZoneCondition::ImplicitlyOpen);
     assert!(!zone.non_seq);
@@ -33,7 +33,7 @@ fn zone____clone____produces_equal_copy() {
         start: Sector(100),
         len: Sector(200),
         capacity: Sector(180),
-        write_pointer: Sector(150),
+        write_pointer: Some(Sector(150)),
         zone_type: ZoneType::Conventional,
         condition: ZoneCondition::NotWritePointer,
         non_seq: true,
@@ -112,8 +112,8 @@ fn device_properties____fields____are_accessible() {
         chunk_sectors: Sector(524288),
         nr_zones: 55880,
         zone_append_max_bytes: 0,
-        max_open_zones: 128,
-        max_active_zones: 0,
+        max_open_zones: Some(128),
+        max_active_zones: None,
         logical_block_size: 512,
         physical_block_size: 4096,
         max_hw_sectors_kb: 1024,
@@ -128,8 +128,8 @@ fn device_properties____fields____are_accessible() {
     assert_eq!(props.chunk_sectors, Sector(524288));
     assert_eq!(props.nr_zones, 55880);
     assert_eq!(props.zone_append_max_bytes, 0);
-    assert_eq!(props.max_open_zones, 128);
-    assert_eq!(props.max_active_zones, 0);
+    assert_eq!(props.max_open_zones, Some(128));
+    assert_eq!(props.max_active_zones, None);
     assert_eq!(props.logical_block_size, 512);
     assert_eq!(props.physical_block_size, 4096);
     assert_eq!(props.capacity_sectors, Sector(19532873728));

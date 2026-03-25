@@ -616,7 +616,7 @@ fn run_info(
                 zone.start,
                 zone.len,
                 zone.capacity,
-                zone.write_pointer,
+                format_wp(zone.write_pointer),
                 zone.zone_type,
                 zone.condition,
             );
@@ -692,7 +692,7 @@ fn run_zones(
                 zone.start,
                 zone.len,
                 zone.capacity,
-                zone.write_pointer,
+                format_wp(zone.write_pointer),
                 zone.zone_type,
                 zone.condition,
                 zone.non_seq,
@@ -701,7 +701,12 @@ fn run_zones(
         } else {
             println!(
                 "{:>6}  {:>12}  {:>12}  {:>12}  {:>25}  {:>20}",
-                idx, zone.start, zone.capacity, zone.write_pointer, zone.zone_type, zone.condition,
+                idx,
+                zone.start,
+                zone.capacity,
+                format_wp(zone.write_pointer),
+                zone.zone_type,
+                zone.condition,
             );
         }
     }
@@ -753,7 +758,7 @@ fn run_report(
             zone.start,
             zone.len,
             zone.capacity,
-            zone.write_pointer,
+            format_wp(zone.write_pointer),
             zone.zone_type,
             zone.condition,
         );
@@ -807,7 +812,8 @@ fn run_zone_op(
             };
             println!(
                 "  zone {idx}: {} (wp: {})",
-                zone.condition, zone.write_pointer
+                zone.condition,
+                format_wp(zone.write_pointer)
             );
         }
     } else {
@@ -817,7 +823,8 @@ fn run_zone_op(
         let before = handle.report()?;
         println!(
             "Zone {zone_idx} before: {} (wp: {})",
-            before.condition, before.write_pointer
+            before.condition,
+            format_wp(before.write_pointer)
         );
 
         match op {
@@ -830,7 +837,8 @@ fn run_zone_op(
         let after = handle.report()?;
         println!(
             "Zone {zone_idx} after:  {} (wp: {})",
-            after.condition, after.write_pointer
+            after.condition,
+            format_wp(after.write_pointer)
         );
     }
 
@@ -1008,7 +1016,9 @@ fn run_write(
     let before = handle.report()?;
     println!(
         "Zone {} before: {} (wp: {})",
-        zone_idx, before.condition, before.write_pointer
+        zone_idx,
+        before.condition,
+        format_wp(before.write_pointer)
     );
 
     let data = vec![pattern; bytes];
@@ -1033,7 +1043,9 @@ fn run_write(
     let after = handle.report()?;
     println!(
         "Zone {} after:  {} (wp: {})",
-        zone_idx, after.condition, after.write_pointer
+        zone_idx,
+        after.condition,
+        format_wp(after.write_pointer)
     );
     println!(
         "  Wrote {} bytes ({} sectors), pattern 0x{:02X}",
@@ -1176,10 +1188,12 @@ fn run_bench(
         .into());
     }
 
-    if props.max_open_zones > 0 && threads > props.max_open_zones {
+    if let Some(max_open) = props.max_open_zones
+        && threads > max_open
+    {
         return Err(format!(
             "requested {} threads but device only supports {} open zones. Use --threads {}",
-            threads, props.max_open_zones, props.max_open_zones
+            threads, max_open, max_open
         )
         .into());
     }
@@ -1515,10 +1529,17 @@ fn alloc_aligned_buf(size: usize, fill: u8) -> Vec<u8> {
     unsafe { Vec::from_raw_parts(ptr, size, size) }
 }
 
-fn format_limit(value: u32) -> String {
-    if value == 0 {
-        "unlimited".to_string()
-    } else {
-        value.to_string()
+fn format_limit(value: Option<u32>) -> String {
+    match value {
+        Some(v) => v.to_string(),
+        None => "unlimited".to_string(),
+    }
+}
+
+/// Format a write pointer for display. `None` (conventional zones) shows as "-".
+fn format_wp(wp: Option<Sector>) -> String {
+    match wp {
+        Some(s) => s.to_string(),
+        None => "-".to_string(),
     }
 }

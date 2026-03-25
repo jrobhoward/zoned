@@ -143,7 +143,8 @@ pub struct Zone {
     /// Usable capacity in sectors (may be less than len for ZNS devices).
     pub capacity: Sector,
     /// Current write pointer position in sectors.
-    pub write_pointer: Sector,
+    /// `None` for conventional zones (which have no write pointer).
+    pub write_pointer: Option<Sector>,
     /// Zone type.
     pub zone_type: ZoneType,
     /// Zone condition (state).
@@ -185,10 +186,10 @@ pub struct DeviceProperties {
     pub nr_zones: u32,
     /// Maximum bytes for a zone append command (0 if unsupported).
     pub zone_append_max_bytes: u64,
-    /// Maximum simultaneously open zones (0 = no limit).
-    pub max_open_zones: u32,
-    /// Maximum active zones (0 = no limit).
-    pub max_active_zones: u32,
+    /// Maximum simultaneously open zones. `None` = no device limit.
+    pub max_open_zones: Option<u32>,
+    /// Maximum active zones. `None` = no device limit.
+    pub max_active_zones: Option<u32>,
     /// Logical block size in bytes (0 if unavailable).
     pub logical_block_size: u32,
     /// Physical block size in bytes (0 if unavailable).

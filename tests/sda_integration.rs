@@ -30,7 +30,7 @@ const DEV_PATH: &str = "/dev/sda";
 const EXPECTED_ZONE_SIZE_SECTORS: u64 = 524288;
 const EXPECTED_NR_ZONES: u32 = 37256;
 const EXPECTED_MAX_OPEN: u32 = 16;
-const EXPECTED_MAX_ACTIVE: u32 = 0;
+// max_active_zones = 0 in sysfs → None (no limit), so no constant needed.
 
 fn open_sda() -> Option<ZonedDevice> {
     let path = Path::new(DEV_PATH);
@@ -119,8 +119,8 @@ fn sysfs____sda____properties_match_known_values() {
     assert_eq!(props.model, DeviceModel::HostManaged);
     assert_eq!(props.chunk_sectors, Sector(EXPECTED_ZONE_SIZE_SECTORS));
     assert_eq!(props.nr_zones, EXPECTED_NR_ZONES);
-    assert_eq!(props.max_open_zones, EXPECTED_MAX_OPEN);
-    assert_eq!(props.max_active_zones, EXPECTED_MAX_ACTIVE);
+    assert_eq!(props.max_open_zones, Some(EXPECTED_MAX_OPEN));
+    assert_eq!(props.max_active_zones, None); // 0 in sysfs = no limit = None
 }
 
 // ============================================================
@@ -179,11 +179,14 @@ fn report_zones____sda____has_sequential_zones_after_conventional() {
 
     let seq = first_seq.unwrap();
     assert_eq!(seq.len, Sector(EXPECTED_ZONE_SIZE_SECTORS));
-    // Write pointer must be within the zone
+    // Write pointer must be within the zone (sequential zones always have Some)
+    let wp = seq
+        .write_pointer
+        .expect("sequential zone should have write pointer");
     assert!(
-        seq.write_pointer >= seq.start && seq.write_pointer <= seq.start + seq.len,
+        wp >= seq.start && wp <= seq.start + seq.len,
         "write pointer {} should be within zone [{}, {}]",
-        seq.write_pointer,
+        wp,
         seq.start,
         seq.start + seq.len
     );
@@ -332,11 +335,13 @@ fn report_all_zones____sda____zone_conditions_are_valid() {
                 seq_required += 1;
                 // Write pointer must be within bounds for non-offline zones
                 if zone.condition != ZoneCondition::Offline {
+                    let wp = zone
+                        .write_pointer
+                        .expect("sequential zone should have write pointer");
                     assert!(
-                        zone.write_pointer >= zone.start
-                            && zone.write_pointer <= zone.start + zone.len,
+                        wp >= zone.start && wp <= zone.start + zone.len,
                         "zone {i} write pointer {} out of bounds [{}, {}]",
-                        zone.write_pointer,
+                        wp,
                         zone.start,
                         zone.start + zone.len
                     );

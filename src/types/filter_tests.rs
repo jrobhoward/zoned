@@ -9,7 +9,7 @@ fn make_zone(zone_type: ZoneType, condition: ZoneCondition) -> Zone {
         start: Sector::ZERO,
         len: Sector(1024),
         capacity: Sector(1024),
-        write_pointer: Sector::ZERO,
+        write_pointer: Some(Sector::ZERO),
         zone_type,
         condition,
         non_seq: false,

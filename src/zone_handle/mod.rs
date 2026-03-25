@@ -84,7 +84,7 @@ impl ZoneHandle {
             start: zone.start,
             len: zone.len,
             capacity: zone.capacity,
-            write_pointer: zone.write_pointer,
+            write_pointer: zone.write_pointer.unwrap_or(zone.start),
             allocator,
         })
     }

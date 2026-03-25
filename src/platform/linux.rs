@@ -128,13 +128,21 @@ fn parse_zone_condition(raw: u8) -> ZoneCondition {
 }
 
 fn blk_zone_to_zone(bz: &BlkZone, has_capacity: bool) -> Zone {
+    let condition = parse_zone_condition(bz.cond);
+    // Conventional zones have no write pointer — the kernel returns u64::MAX
+    // or an undefined value. Map to None for type safety.
+    let write_pointer = if condition == ZoneCondition::NotWritePointer {
+        None
+    } else {
+        Some(Sector(bz.wp))
+    };
     Zone {
         start: Sector(bz.start),
         len: Sector(bz.len),
         capacity: Sector(if has_capacity { bz.capacity } else { bz.len }),
-        write_pointer: Sector(bz.wp),
+        write_pointer,
         zone_type: parse_zone_type(bz.zone_type),
-        condition: parse_zone_condition(bz.cond),
+        condition,
         non_seq: bz.non_seq != 0,
         reset_recommended: bz.reset != 0,
     }
