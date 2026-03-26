@@ -86,8 +86,7 @@ impl NullBlkDevice {
             fs::write(device.configfs_path.join(attr), val)
                 .unwrap_or_else(|e| panic!("failed to write {attr}={val}: {e}"));
         }
-        fs::write(device.configfs_path.join("power"), "1")
-            .expect("failed to power on");
+        fs::write(device.configfs_path.join("power"), "1").expect("failed to power on");
 
         if !device.dev_path.exists() {
             eprintln!("SKIPPED: device did not appear");
@@ -172,7 +171,10 @@ async fn async_device____report_zones____returns_zones() {
         .await
         .expect("open failed");
 
-    let zones = dev.report_zones(Sector::ZERO, 4).await.expect("report_zones failed");
+    let zones = dev
+        .report_zones(Sector::ZERO, 4)
+        .await
+        .expect("report_zones failed");
     assert_eq!(zones.len(), 4);
     assert_eq!(zones[0].zone_type, ZoneType::Conventional);
 }
@@ -184,7 +186,10 @@ async fn async_device____report_all_zones____returns_all() {
         .await
         .expect("open failed");
 
-    let zones = dev.report_all_zones(64).await.expect("report_all_zones failed");
+    let zones = dev
+        .report_all_zones(64)
+        .await
+        .expect("report_all_zones failed");
     assert_eq!(zones.len() as u32, EXPECTED_NR_ZONES);
 }
 
@@ -202,10 +207,7 @@ async fn async_device____report_zones_filtered____works() {
         .report_zones_filtered(filter, 64)
         .await
         .expect("report_zones_filtered failed");
-    assert_eq!(
-        zones.len() as u32,
-        EXPECTED_NR_ZONES - ZONE_NR_CONV
-    );
+    assert_eq!(zones.len() as u32, EXPECTED_NR_ZONES - ZONE_NR_CONV);
 }
 
 #[tokio::test]
@@ -220,9 +222,8 @@ async fn async_device____from_sync____wraps_existing() {
 #[tokio::test]
 async fn async_device____from_arc____wraps_shared() {
     let nullblk = require_nullblk!("nullb_async_fa");
-    let sync_dev = std::sync::Arc::new(
-        zoned::ZonedDevice::open(nullblk.path()).expect("sync open failed"),
-    );
+    let sync_dev =
+        std::sync::Arc::new(zoned::ZonedDevice::open(nullblk.path()).expect("sync open failed"));
     let dev = AsyncZonedDevice::from_arc(sync_dev.clone());
     assert_eq!(dev.inner().path(), nullblk.path());
     assert_eq!(dev.inner_arc().path(), nullblk.path());
@@ -242,7 +243,10 @@ async fn async_device____write_read_round_trip() {
         .expect("write_all_at failed");
 
     // Read back
-    let result = dev.read_at(Sector::ZERO, 4096).await.expect("read_at failed");
+    let result = dev
+        .read_at(Sector::ZERO, 4096)
+        .await
+        .expect("read_at failed");
     assert_eq!(result, data);
 }
 
@@ -267,7 +271,10 @@ async fn async_handle____write_sequential____advances_pointer() {
         .expect("open_writable failed");
 
     // Zone 2 is the first sequential zone (0, 1 are conventional)
-    let handle = dev.zone_handle(ZoneIndex::new(2)).await.expect("zone_handle failed");
+    let handle = dev
+        .zone_handle(ZoneIndex::new(2))
+        .await
+        .expect("zone_handle failed");
 
     assert_eq!(handle.zone_index().await, ZoneIndex::new(2));
     assert!(handle.is_empty().await);
@@ -275,7 +282,10 @@ async fn async_handle____write_sequential____advances_pointer() {
     let start = handle.start().await;
     assert_eq!(handle.write_pointer().await, start);
 
-    let written = handle.write_sequential(vec![0u8; 4096]).await.expect("write failed");
+    let written = handle
+        .write_sequential(vec![0u8; 4096])
+        .await
+        .expect("write failed");
     assert_eq!(written, 4096);
 
     assert_eq!(
@@ -291,8 +301,14 @@ async fn async_handle____write_all_sequential____completes() {
         .await
         .expect("open_writable failed");
 
-    let handle = dev.zone_handle(ZoneIndex::new(3)).await.expect("zone_handle failed");
-    handle.write_all_sequential(vec![0u8; 8192]).await.expect("write_all failed");
+    let handle = dev
+        .zone_handle(ZoneIndex::new(3))
+        .await
+        .expect("zone_handle failed");
+    handle
+        .write_all_sequential(vec![0u8; 8192])
+        .await
+        .expect("write_all failed");
     let start = handle.start().await;
     assert_eq!(
         handle.write_pointer().await,
@@ -307,8 +323,14 @@ async fn async_handle____reset____clears_pointer() {
         .await
         .expect("open_writable failed");
 
-    let handle = dev.zone_handle(ZoneIndex::new(4)).await.expect("zone_handle failed");
-    handle.write_sequential(vec![0u8; 4096]).await.expect("write failed");
+    let handle = dev
+        .zone_handle(ZoneIndex::new(4))
+        .await
+        .expect("zone_handle failed");
+    handle
+        .write_sequential(vec![0u8; 4096])
+        .await
+        .expect("write failed");
     handle.reset().await.expect("reset failed");
 
     let start = handle.start().await;
@@ -322,7 +344,10 @@ async fn async_handle____open_close_finish____lifecycle() {
         .await
         .expect("open_writable failed");
 
-    let handle = dev.zone_handle(ZoneIndex::new(5)).await.expect("zone_handle failed");
+    let handle = dev
+        .zone_handle(ZoneIndex::new(5))
+        .await
+        .expect("zone_handle failed");
 
     handle.open().await.expect("open failed");
     let report = handle.report().await.expect("report failed");
@@ -344,7 +369,10 @@ async fn async_handle____properties____correct() {
         .await
         .expect("open failed");
 
-    let handle = dev.zone_handle(ZoneIndex::new(2)).await.expect("zone_handle failed");
+    let handle = dev
+        .zone_handle(ZoneIndex::new(2))
+        .await
+        .expect("zone_handle failed");
     assert_eq!(handle.len().await, Sector::new(ZONE_SIZE_SECTORS));
     assert!(handle.capacity().await.raw() > 0);
     assert_eq!(handle.zone_index().await, ZoneIndex::new(2));
@@ -357,7 +385,10 @@ async fn async_handle____writev_sequential____works() {
         .await
         .expect("open_writable failed");
 
-    let handle = dev.zone_handle(ZoneIndex::new(6)).await.expect("zone_handle failed");
+    let handle = dev
+        .zone_handle(ZoneIndex::new(6))
+        .await
+        .expect("zone_handle failed");
 
     let bufs = vec![vec![0xAA_u8; 2048], vec![0xBB_u8; 2048]];
     let written = handle.writev_sequential(bufs).await.expect("writev failed");
@@ -379,19 +410,27 @@ async fn async_device____zone_management____open_close_reset() {
     // First sequential zone
     let sector = info.zone_size * ZONE_NR_CONV as u64;
 
-    dev.open_zones(sector, info.zone_size).await.expect("open failed");
+    dev.open_zones(sector, info.zone_size)
+        .await
+        .expect("open failed");
     let zones = dev.report_zones(sector, 1).await.expect("report failed");
     assert_eq!(zones[0].condition, ZoneCondition::ExplicitlyOpen);
 
-    dev.close_zones(sector, info.zone_size).await.expect("close failed");
+    dev.close_zones(sector, info.zone_size)
+        .await
+        .expect("close failed");
     let zones = dev.report_zones(sector, 1).await.expect("report failed");
     assert_eq!(zones[0].condition, ZoneCondition::Closed);
 
-    dev.finish_zones(sector, info.zone_size).await.expect("finish failed");
+    dev.finish_zones(sector, info.zone_size)
+        .await
+        .expect("finish failed");
     let zones = dev.report_zones(sector, 1).await.expect("report failed");
     assert_eq!(zones[0].condition, ZoneCondition::Full);
 
-    dev.reset_zones(sector, info.zone_size).await.expect("reset failed");
+    dev.reset_zones(sector, info.zone_size)
+        .await
+        .expect("reset failed");
     let zones = dev.report_zones(sector, 1).await.expect("report failed");
     assert_eq!(zones[0].condition, ZoneCondition::Empty);
 }

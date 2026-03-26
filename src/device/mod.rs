@@ -191,7 +191,7 @@ impl ZonedDevice {
     ///
     /// Opening a zone transitions it to the explicitly-open state. The device
     /// may have a limit on the number of simultaneously open zones
-    /// (see [`DeviceLimits::max_open_zones`]).
+    /// (see [`crate::types::DeviceLimits::max_open_zones`]).
     pub fn open_zones(&self, sector: Sector, nr_sectors: Sector) -> Result<()> {
         self.validate_range(sector, nr_sectors)?;
         self.inner.open_zones(sector, nr_sectors)

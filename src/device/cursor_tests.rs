@@ -76,10 +76,7 @@ fn cursor____seek____rejects_unaligned() {
     let mut cursor = dev.cursor();
     let result = cursor.seek(SeekFrom::Start(100));
     assert!(result.is_err());
-    assert_eq!(
-        result.unwrap_err().kind(),
-        std::io::ErrorKind::InvalidInput
-    );
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
 }
 
 #[test]

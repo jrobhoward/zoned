@@ -80,6 +80,9 @@ pub fn is_not_mounted(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Check that the device is not currently mounted (FreeBSD).
+///
+/// Uses `getfsstat()` to enumerate mounted filesystems.
 #[cfg(target_os = "freebsd")]
 pub fn is_not_mounted(path: &Path) -> Result<()> {
     use std::ffi::CStr;
@@ -182,6 +185,9 @@ pub fn has_no_partitions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Check that the device has no partitions (FreeBSD).
+///
+/// Scans `/dev/` for partition device nodes matching the base device name.
 #[cfg(target_os = "freebsd")]
 pub fn has_no_partitions(path: &Path) -> Result<()> {
     let dev_name =

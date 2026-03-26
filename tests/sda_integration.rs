@@ -103,6 +103,10 @@ fn sysfs____sda____reports_host_managed() {
     }
 
     let model = zoned::sysfs::device_model(path).expect("device_model failed");
+    if model == DeviceModel::None {
+        eprintln!("SKIPPED: {DEV_PATH} is not a zoned device");
+        return;
+    }
     assert_eq!(model, DeviceModel::HostManaged);
 }
 
@@ -116,6 +120,10 @@ fn sysfs____sda____properties_match_known_values() {
 
     let props = zoned::sysfs::device_properties(path).expect("device_properties failed");
 
+    if props.model == DeviceModel::None {
+        eprintln!("SKIPPED: {DEV_PATH} is not a zoned device");
+        return;
+    }
     assert_eq!(props.model, DeviceModel::HostManaged);
     assert_eq!(
         props.geometry.chunk_sectors,

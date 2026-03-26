@@ -60,7 +60,7 @@ jobs:
           usesh: true
           prepare: |
             pkg install -y curl
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component clippy
           run: |
             . "$HOME/.cargo/env"
             cargo build --all-targets
