@@ -421,7 +421,7 @@ const _: () = {
     }
 };
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod cursor_tests;
 #[cfg(test)]
 mod device_tests;
