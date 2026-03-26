@@ -422,6 +422,8 @@ const _: () = {
 };
 
 #[cfg(test)]
+mod cursor_tests;
+#[cfg(test)]
 mod device_tests;
 
 impl std::fmt::Debug for ZonedDevice {

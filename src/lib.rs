@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! Pure Rust library for zoned block device management (SMR/ZNS).
 //!
 //! Provides a safe, idiomatic interface for interacting with zoned block

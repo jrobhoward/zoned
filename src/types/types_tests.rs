@@ -278,3 +278,128 @@ fn zone_index____ordering____works() {
     assert!(ZoneIndex(0) < ZoneIndex(1));
     assert_eq!(ZoneIndex(5), ZoneIndex(5));
 }
+
+// Zone convenience method tests
+
+fn make_seq_zone(start: u64, len: u64, wp: u64, condition: ZoneCondition) -> Zone {
+    Zone {
+        start: Sector(start),
+        len: Sector(len),
+        capacity: Sector(len),
+        write_pointer: Some(Sector(wp)),
+        zone_type: ZoneType::SequentialWriteRequired,
+        condition,
+        non_seq: false,
+        reset_recommended: false,
+    }
+}
+
+fn make_conv_zone(start: u64, len: u64) -> Zone {
+    Zone {
+        start: Sector(start),
+        len: Sector(len),
+        capacity: Sector(len),
+        write_pointer: None,
+        zone_type: ZoneType::Conventional,
+        condition: ZoneCondition::NotWritePointer,
+        non_seq: false,
+        reset_recommended: false,
+    }
+}
+
+#[test]
+fn zone____remaining_capacity____sequential_partially_written() {
+    let zone = make_seq_zone(1000, 500, 1200, ZoneCondition::ImplicitlyOpen);
+    // wp is at 1200, started at 1000 → 200 sectors written → 300 remaining
+    assert_eq!(zone.remaining_capacity(), Sector(300));
+}
+
+#[test]
+fn zone____remaining_capacity____sequential_empty() {
+    let zone = make_seq_zone(1000, 500, 1000, ZoneCondition::Empty);
+    assert_eq!(zone.remaining_capacity(), Sector(500));
+}
+
+#[test]
+fn zone____remaining_capacity____conventional_returns_full_capacity() {
+    let zone = make_conv_zone(0, 1000);
+    assert_eq!(zone.remaining_capacity(), Sector(1000));
+}
+
+#[test]
+fn zone____is_sequential____seq_required() {
+    let zone = make_seq_zone(0, 100, 0, ZoneCondition::Empty);
+    assert!(zone.is_sequential());
+}
+
+#[test]
+fn zone____is_sequential____conventional_returns_false() {
+    let zone = make_conv_zone(0, 100);
+    assert!(!zone.is_sequential());
+}
+
+#[test]
+fn zone____is_conventional____conventional() {
+    let zone = make_conv_zone(0, 100);
+    assert!(zone.is_conventional());
+}
+
+#[test]
+fn zone____is_conventional____sequential_returns_false() {
+    let zone = make_seq_zone(0, 100, 0, ZoneCondition::Empty);
+    assert!(!zone.is_conventional());
+}
+
+#[test]
+fn zone____is_writable____empty_zone() {
+    let zone = make_seq_zone(0, 100, 0, ZoneCondition::Empty);
+    assert!(zone.is_writable());
+}
+
+#[test]
+fn zone____is_writable____full_zone_returns_false() {
+    let zone = make_seq_zone(0, 100, 100, ZoneCondition::Full);
+    assert!(!zone.is_writable());
+}
+
+#[test]
+fn zone____is_writable____readonly_returns_false() {
+    let zone = make_seq_zone(0, 100, 0, ZoneCondition::ReadOnly);
+    assert!(!zone.is_writable());
+}
+
+#[test]
+fn zone____is_writable____offline_returns_false() {
+    let zone = make_seq_zone(0, 100, 0, ZoneCondition::Offline);
+    assert!(!zone.is_writable());
+}
+
+#[test]
+fn zone____is_writable____open_zone() {
+    let zone = make_seq_zone(0, 100, 50, ZoneCondition::ExplicitlyOpen);
+    assert!(zone.is_writable());
+}
+
+#[test]
+fn zone____is_empty____empty() {
+    let zone = make_seq_zone(0, 100, 0, ZoneCondition::Empty);
+    assert!(zone.is_empty());
+}
+
+#[test]
+fn zone____is_empty____open_returns_false() {
+    let zone = make_seq_zone(0, 100, 50, ZoneCondition::ImplicitlyOpen);
+    assert!(!zone.is_empty());
+}
+
+#[test]
+fn zone____is_full____full() {
+    let zone = make_seq_zone(0, 100, 100, ZoneCondition::Full);
+    assert!(zone.is_full());
+}
+
+#[test]
+fn zone____is_full____empty_returns_false() {
+    let zone = make_seq_zone(0, 100, 0, ZoneCondition::Empty);
+    assert!(!zone.is_full());
+}

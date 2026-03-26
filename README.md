@@ -1,9 +1,24 @@
 # zoned
 
+[![Crates.io](https://img.shields.io/crates/v/zoned.svg)](https://crates.io/crates/zoned)
+[![docs.rs](https://docs.rs/zoned/badge.svg)](https://docs.rs/zoned)
+[![License](https://img.shields.io/crates/l/zoned.svg)](LICENSE)
+
 Pure Rust library for zoned block device management (SMR/ZNS).
 
-Provides a safe, idiomatic interface for interacting with Shingled Magnetic
-Recording (SMR) hard drives and Zoned Namespace (ZNS) NVMe SSDs.
+Modern storage devices increasingly use **zoned storage** — a model where the
+drive is divided into sequential-write zones that must be written from start to
+finish and explicitly reset before rewriting. This includes:
+
+- **Shingled Magnetic Recording (SMR)** hard drives — high-capacity HDDs that
+  overlap tracks to increase density, requiring sequential writes within zones
+- **Zoned Namespace (ZNS)** NVMe SSDs — next-generation SSDs that expose the
+  flash translation layer to the host, reducing write amplification and
+  over-provisioning
+
+The `zoned` crate provides a safe, idiomatic Rust interface for working with
+these devices: reporting zone state, managing zone lifecycles, and performing
+I/O — all through the kernel's standard block device ioctls.
 
 ## Features
 
@@ -124,7 +139,7 @@ Add `zoned` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-zoned = "0.1"
+zoned = "0.5"
 ```
 
 ### Opening a Device and Reporting Zones
@@ -304,7 +319,7 @@ internally — the same approach `tokio::fs` uses:
 
 ```toml
 [dependencies]
-zoned = { version = "0.1", features = ["tokio"] }
+zoned = { version = "0.5", features = ["tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 

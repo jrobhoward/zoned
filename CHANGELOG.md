@@ -2,7 +2,7 @@
 
 All notable changes to the `zoned` crate are documented in this file.
 
-## [Unreleased]
+## [0.5.0]
 
 ### Added
 

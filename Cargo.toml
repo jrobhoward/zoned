@@ -1,11 +1,15 @@
 [package]
 name = "zoned"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
 authors = ["James Howard <jrobhoward@gmail.com>"]
 description = "Pure Rust library for zoned block device management (SMR/ZNS)"
+repository = "https://github.com/jrobhoward/zoned"
+homepage = "https://github.com/jrobhoward/zoned"
+documentation = "https://docs.rs/zoned"
+readme = "README.md"
 categories = ["filesystem", "hardware-support", "os::linux-apis"]
 keywords = ["zoned", "smr", "zns", "block-device", "shingled"]
 
@@ -15,7 +19,7 @@ tokio = ["dep:tokio"]
 
 [dependencies]
 libc = "0.2"
-nix = { version = "0.30", features = ["ioctl"] }
+nix = { version = "0.31", features = ["ioctl"] }
 thiserror = "2.0"
 tokio = { version = "1", features = ["rt", "sync"], optional = true }
 
