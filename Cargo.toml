@@ -10,6 +10,10 @@ repository = "https://github.com/jrobhoward/zoned"
 homepage = "https://github.com/jrobhoward/zoned"
 documentation = "https://docs.rs/zoned"
 readme = "README.md"
+exclude = [
+    ".github/",
+    "docs/HGST.md",
+]
 categories = ["filesystem", "hardware-support", "os::linux-apis"]
 keywords = ["zoned", "smr", "zns", "block-device", "shingled"]
 
