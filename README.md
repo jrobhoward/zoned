@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/zoned.svg)](https://crates.io/crates/zoned)
 [![docs.rs](https://docs.rs/zoned/badge.svg)](https://docs.rs/zoned)
-[![License](https://img.shields.io/crates/l/zoned.svg)](LICENSE)
+[![License](https://img.shields.io/crates/l/zoned.svg)](#license)
 
 Pure Rust library for zoned block device management (SMR/ZNS).
 
