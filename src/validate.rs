@@ -7,10 +7,6 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::{Result, ZonedError};
-#[cfg(target_os = "linux")]
-use crate::sysfs;
-#[cfg(target_os = "linux")]
-use crate::types::DeviceModel;
 
 /// Check that the path refers to a device node.
 ///
@@ -202,12 +198,12 @@ pub fn has_no_partitions(path: &Path) -> Result<()> {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             // Match <dev_name>p<N> or <dev_name>s<N>
-            if let Some(suffix) = name_str.strip_prefix(dev_name) {
-                if suffix.starts_with('p') || suffix.starts_with('s') {
-                    if suffix[1..].chars().all(|c| c.is_ascii_digit()) && suffix.len() > 1 {
-                        partitions.push(name_str.to_string());
-                    }
-                }
+            if let Some(suffix) = name_str.strip_prefix(dev_name)
+                && (suffix.starts_with('p') || suffix.starts_with('s'))
+                && suffix.len() > 1
+                && suffix[1..].chars().all(|c| c.is_ascii_digit())
+            {
+                partitions.push(name_str.to_string());
             }
         }
     }
@@ -230,9 +226,11 @@ pub fn has_no_partitions(_path: &Path) -> Result<()> {
 
 /// Check that the device is a zoned block device.
 ///
-/// On Linux, checks sysfs. On FreeBSD, uses the `DIOCZONECMD` ioctl.
-#[cfg(target_os = "linux")]
+/// On Linux, checks sysfs. On FreeBSD, issues `DIOCZONECMD GET_PARAMS`.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn is_zoned_device(path: &Path) -> Result<()> {
+    use crate::sysfs;
+    use crate::types::DeviceModel;
     let model = sysfs::device_model(path)?;
     if model == DeviceModel::None {
         return Err(ZonedError::NotZoned {
@@ -240,24 +238,6 @@ pub fn is_zoned_device(path: &Path) -> Result<()> {
         });
     }
     Ok(())
-}
-
-#[cfg(target_os = "freebsd")]
-pub fn is_zoned_device(path: &Path) -> Result<()> {
-    // Try opening the device and issuing GET_PARAMS.
-    // If it succeeds and zone_mode != NONE, it's zoned.
-    use crate::ZonedDevice;
-    match ZonedDevice::open(path) {
-        Ok(dev) => match dev.device_info() {
-            Ok(_) => Ok(()),
-            Err(_) => Err(ZonedError::NotZoned {
-                path: path.to_path_buf(),
-            }),
-        },
-        Err(_) => Err(ZonedError::NotZoned {
-            path: path.to_path_buf(),
-        }),
-    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]

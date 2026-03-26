@@ -1,32 +1,69 @@
-//! Query zoned block device properties via sysfs.
+//! Query zoned block device properties.
 //!
-//! Linux exposes device attributes under `/sys/block/<device>/queue/`
-//! (zone model, zone size, zone count, max open/active zones) and
-//! `/sys/block/<device>/device/` (vendor, model name). These functions
-//! read those attributes without opening the device.
+//! On **Linux**, reads sysfs attributes under `/sys/block/<device>/queue/`
+//! and `/sys/block/<device>/device/` without opening the device.
 //!
-//! **Linux only.** On non-Linux platforms, these functions return
-//! `UnsupportedPlatform` errors.
+//! On **FreeBSD**, opens the device read-only and queries ioctls
+//! (`DIOCZONECMD GET_PARAMS`, `DIOCGSECTORSIZE`, `DIOCGMEDIASIZE`).
+//! Fields with no FreeBSD equivalent (vendor, model name, I/O scheduler,
+//! zone-append limit) are returned as `None` or zero.
+//!
+//! On other platforms, these functions return `UnsupportedPlatform`.
 
 /// Query the device model from sysfs.
 ///
 /// Returns `DeviceModel::None` if the device is not zoned.
 ///
-/// **Linux only.** Returns `UnsupportedPlatform` on other platforms.
-#[cfg(not(target_os = "linux"))]
+/// On platforms without sysfs, returns `UnsupportedPlatform`.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub fn device_model(_path: &std::path::Path) -> crate::error::Result<crate::types::DeviceModel> {
     Err(crate::error::ZonedError::UnsupportedPlatform)
 }
 
-/// Read extended device properties from sysfs.
+/// Read extended device properties.
 ///
-/// **Linux only.** Returns `UnsupportedPlatform` on other platforms.
-#[cfg(not(target_os = "linux"))]
+/// On platforms without sysfs or equivalent, returns `UnsupportedPlatform`.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 pub fn device_properties(
     _path: &std::path::Path,
 ) -> crate::error::Result<crate::types::DeviceProperties> {
     Err(crate::error::ZonedError::UnsupportedPlatform)
 }
+
+// ============================================================
+// FreeBSD implementation — queries ioctls instead of sysfs
+// ============================================================
+
+#[cfg(target_os = "freebsd")]
+mod freebsd_impl {
+    use std::path::Path;
+
+    use crate::error::Result;
+    use crate::platform::PlatformDevice;
+    use crate::types::{DeviceModel, DeviceProperties};
+
+    /// Query the device model.
+    ///
+    /// On FreeBSD, opens the device read-only and issues `GET_PARAMS`.
+    pub fn device_model(path: &Path) -> Result<DeviceModel> {
+        let dev = PlatformDevice::open(path)?;
+        dev.device_model()
+    }
+
+    /// Read device properties via ioctls.
+    ///
+    /// On FreeBSD there is no sysfs, so this opens the device read-only and
+    /// queries `DIOCZONECMD` (GET_PARAMS), `DIOCGSECTORSIZE`, and
+    /// `DIOCGMEDIASIZE`. Fields with no FreeBSD equivalent (vendor, model
+    /// name, I/O scheduler, zone-append limit) are returned as `None` or zero.
+    pub fn device_properties(path: &Path) -> Result<DeviceProperties> {
+        let dev = PlatformDevice::open(path)?;
+        dev.device_properties()
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+pub use freebsd_impl::{device_model, device_properties};
 
 // ============================================================
 // Linux implementation

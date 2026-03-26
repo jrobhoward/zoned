@@ -5,7 +5,10 @@ use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, ZonedError};
-use crate::types::{DeviceInfo, Sector, Zone, ZoneCondition, ZoneType};
+use crate::types::{
+    BlockSizes, DeviceGeometry, DeviceIdentity, DeviceInfo, DeviceLimits, DeviceModel,
+    DeviceProperties, Sector, Zone, ZoneCondition, ZoneType,
+};
 
 // ============================================================
 // FreeBSD disk_zone.h structs (repr(C), verified against FreeBSD 15.0)
@@ -409,7 +412,7 @@ impl PlatformDevice {
         // Derive zone count from capacity
         let total_sectors = Sector(media_size as u64 / 512);
         let nr_zones = if zone_size.0 > 0 {
-            ((total_sectors.0 + zone_size.0 - 1) / zone_size.0) as u32
+            total_sectors.0.div_ceil(zone_size.0) as u32
         } else {
             0
         };
@@ -477,6 +480,53 @@ impl PlatformDevice {
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Query the zoned device model via GET_PARAMS.
+    pub(crate) fn device_model(&self) -> Result<DeviceModel> {
+        let params = self.get_zone_params()?;
+        Ok(match params.zone_mode {
+            DISK_ZONE_MODE_HOST_AWARE => DeviceModel::HostAware,
+            DISK_ZONE_MODE_HOST_MANAGED => DeviceModel::HostManaged,
+            _ => DeviceModel::None,
+        })
+    }
+
+    /// Gather device properties from ioctls.
+    ///
+    /// FreeBSD has no sysfs, so this queries DIOCZONECMD (GET_PARAMS),
+    /// DIOCGSECTORSIZE, and DIOCGMEDIASIZE directly. Fields that have
+    /// no FreeBSD equivalent are returned as zero or None.
+    pub(crate) fn device_properties(&self) -> Result<DeviceProperties> {
+        let model = self.device_model()?;
+        let info = self.device_info()?;
+        let media_size = self.get_media_size()?;
+        let capacity_sectors = Sector(media_size as u64 / 512);
+
+        Ok(DeviceProperties {
+            model,
+            identity: DeviceIdentity {
+                vendor: None,
+                model_name: None,
+            },
+            geometry: DeviceGeometry {
+                chunk_sectors: info.zone_size,
+                nr_zones: info.nr_zones,
+                capacity_sectors,
+            },
+            limits: DeviceLimits {
+                zone_append_max_bytes: 0,
+                max_open_zones: None,
+                max_active_zones: None,
+                max_hw_sectors_kb: 0,
+                max_sectors_kb: 0,
+            },
+            block_sizes: BlockSizes {
+                logical_block_size: self.sector_size,
+                physical_block_size: self.sector_size,
+            },
+            scheduler: None,
+        })
     }
 
     // ============================================================

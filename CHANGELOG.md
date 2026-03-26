@@ -80,8 +80,6 @@ All notable changes to the `zoned` crate are documented in this file.
   `write`, `pwrite`, `validate`, `bench`. Replaces the former `zone_info`
   example.
 
-### Changed
-
 - **`Zone::write_pointer`**: `Sector` -> `Option<Sector>`. Conventional zones
   now return `None` instead of a meaningless sentinel value (`u64::MAX`).
 

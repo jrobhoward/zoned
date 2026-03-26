@@ -25,6 +25,10 @@ libc = "0.2"
 tempfile = "3.27"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
+[[example]]
+name = "zone_store_async"
+required-features = ["tokio"]
+
 [lints.clippy]
 cognitive_complexity = "warn"
 unwrap_used = "warn"
